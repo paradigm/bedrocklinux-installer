@@ -192,6 +192,7 @@ MAKE_FSCK=
 #     bedrocklinux.org/1.0alpha4/bedrock-userland-1.0alpha4.tar.gz
 # or a git repo here:
 #     https://github.com/paradigm/bedrocklinux-userland
+# This version of this installer is aimed specifically at the 1.0alpha4 version.
 BEDROCK_USERLAND_SRC=
 ## musl-libc
 # The musl C library
@@ -203,6 +204,8 @@ BEDROCK_USERLAND_SRC=
 # - MAKE_FSCK=1
 # You can probably find a tarball or VCS repo here:
 #     http://www.musl-libc.org/
+# This version of this installer was tested against musl version 0.9.12; a
+# newer version will probably be fine.
 MUSL_SRC=
 ## fuse
 # The FUSE development libraries
@@ -211,14 +214,16 @@ MUSL_SRC=
 # - MAKE_BRP=1
 # You can probably find a tarball or VCS repo here:
 #     http://fuse.sourceforge.net/
-# Note: This was only tested against exactly version 2.9.3.  The installer will
-# patch the source and may fail against other versions.
+# This was only tested against exactly version 2.9.3.  The installer will patch
+# the source and may fail against other versions.
 FUSE_SRC=
 ## Busybox
 # Required for:
 # - MAKE_BUSYBOX=1
 # You can probably find a tarball or VCS repo here:
 #     http://www.busybox.net/
+# Note you need at least 1.20, as there seems to be a bug before that which is
+# problematic with Bedrock Linux.
 BUSYBOX_SRC=
 ## fsck.ext2-4
 # Required for:
@@ -226,6 +231,16 @@ BUSYBOX_SRC=
 # You can probably find a tarball or VCS repo here:
 #     http://e2fsprogs.sourceforge.net/
 FSCK_SRC=
+
+### Miscellaneous
+#
+## busybox config
+# If you would like to specify the busybox config to use, provide the path to
+# it here.  If you leave it a blank, a (hopefully sane) default will be chosen
+# for you.  Be careful to ensure it specififes static compilation, that it has
+# all of the applets Bedrock Linux will need, and that it supports "--install".
+# Note this is ignored of MAKE_BUSYBOX is 0.
+BUSYBOX_CONFIG=
 EOF
 	if [ $? -ne 0 ]
 	then
@@ -242,7 +257,7 @@ EOF
 source_config(){
 	if [ "$1" != "-c" ]
 	then
-		echo "Something went wrong in or before source_config(),"
+		echo "Something went wrong in or before source_config,"
 		echo "aborting."
 		exit 1
 	fi
@@ -261,7 +276,7 @@ sanity_check_config(){
 	announce_low "Running sanity check on config"
 
 	### Ensure JOBS is an int
-	if echo $JOBS | grep -q "[^\d]" ||  [ "$JOBS" = "" ] || [ "$JOBS" -lt "1" ]
+	if echo $JOBS | grep -q "[^0-9]" ||  [ "$JOBS" = "" ] || [ "$JOBS" -lt "1" ]
 	then
 			echo "Problem found."
 			echo "JOBS should be an integer greater than or equal to 1."
@@ -280,8 +295,8 @@ sanity_check_config(){
 		fi
 	done
 
-	### Ensure valid value for SRC items
-	for SRC in 'BEDROCK_USERLAND_SRC' 'MUSL_SRC' 'FUSE_SRC' 'BUSYBOX_SRC' 'FSCK_SRC'
+	### Ensure valid value for SRC items (and BUSYBOX_CONFIG)
+	for SRC in 'BEDROCK_USERLAND_SRC' 'MUSL_SRC' 'FUSE_SRC' 'BUSYBOX_SRC' 'FSCK_SRC' 'BUSYBOX_CONFIG'
 	do
 		SRC_VAL=$(eval 'echo $'$SRC)
 		PROBLEM=0
@@ -609,6 +624,74 @@ install(){
 	check
 }
 
+busybox_defconfig(){
+	announce_low "Generating busybox config"
+	cd $SCRATCH_DIR/src/$task/
+	cd $(ls)
+	# use busybox's default config
+	make defconfig >>$log 2>&1
+	# ensure static
+	if ! grep -q "^CONFIG_STATIC" .config
+	then
+		echo "CONFIG_STATIC=y" >> .config
+	elif grep -q "^CONFIG_STATIC=n" .config
+	then
+		sed 's/^CONFIG_STATIC=n/CONFIG_STATIC=y/' .config > .config-new
+		mv .config-new .config
+	fi
+	check
+}
+
+busybox_test(){
+	# test busybox in case either the user provides a bad .config or there's
+	# some issue between busybox and something else (like musl or ld)
+	announce_low "Testing $1"
+
+	echo "Testing to see if it runs at all" >>$log
+	if ! ./$1 >>$log 2>&1
+	then
+		echo "$1 did not run correctly" | tee -a $log
+		return 1
+	fi
+
+	# if ldd returns 0, then it is NOT static
+	echo "Testing to see if it is static" >>$log
+	if ldd $1 >>$log 2>&1
+	then
+		echo "$1 is not static" | tee -a $log
+		return 1
+	fi
+
+	echo "Testing for missing applets" >>$log
+	MISSINGAPPLETS=""
+	for APPLET in "\[" awk basename cat chmod chroot chvt clear\
+		cmp cp cut dd df dirname echo ed env expand expr false find\
+		free getty grep head hostname hwclock id init install\
+		kill last ln ls mdev mkdir more mount mt od passwd\
+		printf ps readlink reset rm route sed seq sh sleep sort\
+		split stat swapon sync tail time top touch true tty umount\
+		uname vi wc wget which xargs yes
+	do
+		if ! ./$1 | awk 'p==1;/^Currently/{p=1}' | tr -d ',\n' | sed 's/[ \t]/\n/g' | grep -q "^$APPLET$"
+		then
+			MISSINGAPPLETS="$MISSINGAPPLETS $APPLET"
+		fi
+	done
+	if [ -n "$MISSINGAPPLETS" ]
+	then
+		echo "$1 is missing the following applets: $MISSINGAPPLETS" | tee -a $log
+		return 1
+	fi
+
+	echo "Testing for --install" >>$log
+	if ! $1 | grep -q -- "--install"
+	then
+		echo "$1 is missing --install" | tee -a $log
+	fi
+	echo "$1 looks good"
+	return 0
+}
+
 # END OF FUNCTIONS
 # execution actually starts here
 
@@ -654,6 +737,12 @@ log="$SCRATCH_DIR/log"
 dev="$SCRATCH_DIR/dev"
 
 # setup log
+if [ -n "$2" ]
+then
+	in=$2
+else
+	in="./brinstaller.conf"
+fi
 announce_low "Verbose logging to $log"
 (
 # could not log before this as we did not know where to log
@@ -664,13 +753,14 @@ Bedrock Linux 1.0alpha4 Flopsie installer
 -----------------------------------------
 
 Early Setup
-  Parsing config at ./brinstaller.conf... done.
+  Parsing config at $in... done.
   Running sanity check on config... done.
-  Setting up /tmp/brscratch... done.
-  Verbose logging to /tmp/brscratch/log...
+  Setting up $SCRATCH_DIR... done.
+  Verbose logging to $log...
 EOF
 ) > $log
 check
+echo "  (consider \`tail -f $log\`)" | tee -a $log
 
 # TODO: do MAKE_STRUCTURE
 
@@ -689,7 +779,7 @@ then
 	compile
 	install
 else
-	echo "(Skipping $task, not required)"
+	echo "(Skipping $task, not required)" | tee -a $log
 fi
 
 ### fuse
@@ -704,7 +794,44 @@ then
 	compile
 	install
 else
-	echo "(Skipping $task, not required)"
+	echo "(Skipping $task, not required)" | tee -a $log
+fi
+
+### busybox
+task="busybox"
+# check if busybox is required
+if [ "$MAKE_BUSYBOX" = "1" ]
+then
+	announce_high "Making busybox"
+	copy_untar "$BUSYBOX_SRC"
+	if [ "$BUSYBOX_CONFIG" = "" ]
+	then
+		busybox_defconfig
+	fi
+	compile
+	# older versions of ld apparently break busybox when stripping it.  Test if
+	# it runs stripped vs unstripped.
+	cd $SCRATCH_DIR/src/$task/
+	cd $(ls)
+	new_busybox=""
+	if ! busybox_test ./busybox
+	then
+		if ! busybox_test ./busybox_unstripped
+		then
+			echo "Failed to create suitable busybox"
+			abort
+		else
+			new_busybox=./busybox_unstripped
+		fi
+	else
+		new_busybox=./busybox
+	fi
+	announce_low "Installing"
+	mkdir -p $OUTPUT_DIR/bedrock/bin/
+	cp $new_busybox $OUTPUT_DIR/bedrock/bin/busybox
+	check
+else
+	echo "(Skipping $task, not required)" | tee -a $log
 fi
 
 ## TODO: continue
