@@ -1,6 +1,6 @@
 #!/bin/sh
 ### Bedrock Linux 1.0alpha4 Flopsie
-### brinstaller (BedRock installer)
+### bedrocklinux-installer (BedRock installer)
 # This script will (partially) install or update a Bedrock Linux system's core
 # components.
 
@@ -8,9 +8,9 @@
 
 print_help(){
 cat << 'EOF'
-Usage: brinstaller ARGUMENT
+Usage: bedrocklinux-installer ARGUMENT
 
-brinstaller will install or update a Bedrock Linux system's core components.
+bedrocklinux-installer will install or update a Bedrock Linux system's core components.
 
 ARGUMENTS:
    -g  generate a blank configuration file.  If a path is provided after this,
@@ -19,7 +19,7 @@ ARGUMENTS:
    -c  use a filled out configuration file.  If a path is provided after this,
        a file in the provided location will be used; otherwise, this script
        will look in the present working directory for a file named
-       'brinstaller.conf'
+       'bedrocklinux-installer.conf'
 EOF
 exit
 }
@@ -73,7 +73,7 @@ generate_config(){
 	then
 		out=$2
 	else
-		out="./brinstaller.conf"
+		out="./bedrocklinux-installer.conf"
 	fi
 	announce_low "Generating config at $out..."
 	if [ -e $out ]
@@ -86,11 +86,11 @@ generate_config(){
 	fi
 cat << 'EOF' > $out
 ### Bedrock Linux 1.0alpha4 Flopsie
-### brinstaller.conf configuration file
+### bedrocklinux-installer.conf configuration file
 # This file contains configuration options for the Bedrock Linux installer.
 # Read the comments and fill out the appropriate fields, then pass this file as
-# an argument to brinstaller.sh like so:
-# ./brinstaller.sh -c brinstaller.conf
+# an argument to bedrocklinux-installer.sh like so:
+# ./bedrocklinux-installer.sh -c bedrocklinux-installer.conf
 
 ### Note
 # Most of the items below should be set to either:
@@ -133,7 +133,7 @@ OUTPUT_DIR=
 #
 ## Scratch
 # This is the directory where the installer will place temporary files.
-# e.g.: SCRATCH_DIR=/tmp/brinstaller
+# e.g.: SCRATCH_DIR=/tmp/bedrocklinux-installer-scratch
 SCRATCH_DIR=
 
 ### Components
@@ -207,6 +207,13 @@ BEDROCK_USERLAND_SRC=
 # This version of this installer was tested against musl version 0.9.12; a
 # newer version will probably be fine.
 MUSL_SRC=
+## libcap
+# The POSIX Capabilities library
+# Required for:
+# - MAKE_BRC=1
+# You can probably find a tarball or VCS repo here:
+# http://sites.google.com/site/fullycapable
+LIBCAP_SRC=
 ## fuse
 # The FUSE development libraries
 # Required for:
@@ -265,7 +272,7 @@ source_config(){
 	then
 		in=$2
 	else
-		in="./brinstaller.conf"
+		in="./bedrocklinux-installer.conf"
 	fi
 	announce_low "Parsing config at $in"
 	. $in
@@ -296,7 +303,7 @@ sanity_check_config(){
 	done
 
 	### Ensure valid value for SRC items (and BUSYBOX_CONFIG)
-	for SRC in 'BEDROCK_USERLAND_SRC' 'MUSL_SRC' 'FUSE_SRC' 'BUSYBOX_SRC' 'FSCK_SRC' 'BUSYBOX_CONFIG'
+	for SRC in 'BEDROCK_USERLAND_SRC' 'MUSL_SRC' 'LIBCAP_SRC' 'FUSE_SRC' 'BUSYBOX_SRC' 'FSCK_SRC' 'BUSYBOX_CONFIG'
 	do
 		SRC_VAL=$(eval 'echo $'$SRC)
 		PROBLEM=0
@@ -475,6 +482,20 @@ sanity_check_config(){
 			fi
 		done
 	fi
+	if [ "$LIBCAP_SRC" = "" ]
+	then
+		for COMPONENT in 'MAKE_BRC'
+		do
+			VAL=$(eval 'echo $'$COMPONENT)
+			if [ "$VAL" = "1" ]
+			then
+				echo "Problem found."
+				echo "$COMPONENT is set to 1 but a dependency,"
+				echo "LIBCAP_SRC, is undefined"
+				exit 1
+			fi
+		done
+	fi
 	if [ "$FUSE_SRC" = "" ]
 	then
 		for COMPONENT in 'MAKE_BRF' 'MAKE_BRP'
@@ -509,14 +530,44 @@ sanity_check_config(){
 
 copy_untar(){
 	announce_low "Copying/untaring source"
-	mkdir -p $SCRATCH_DIR/src/$task || abort
+	# we could be copying a directory OR untaring
+	if [ -z "$2" ]
+	then
+		dest=$SCRATCH_DIR/src/$task
+	else
+		dest=$2
+	fi
+
+	mkdir -p $dest || abort
 	if [ -d $1 ]
 	then
-		cp -r $1 $SCRATCH_DIR/src/$task
+		echo "\`cp -r $1 $dest\`" >>$log 2>&1
+		cp -r $1 $dest >>$log 2>&1 || abort
 	else
-		cd $SCRATCH_DIR/src/$task
+		cd $dest
 		echo "\`tar xvf $1\`" >>$log 2>&1
-		tar xvf $1 >>$log 2>&1
+		tar xvf $1 >>$log 2>&1 || abort
+	fi
+
+	# contents probably come in a directory
+	# do we want to keep that containing directory?
+	if [ "$3" = "kill_contain" ]
+	then
+		cd $dest
+		if [ "$(ls -A -1 | wc -l)" -ne 1 ]
+		then
+			echo "Expected exactly one directory in $dest, aborting" | tee -a $log
+			exit
+		fi
+		cont_dir=$(ls -A)
+		cd $cont_dir
+		for file in $(ls -A1)
+		do
+			echo "\`mv $file .." >>$log 2>&1
+			mv $file ..
+		done
+		cd ..
+		rmdir $cont_dir >>$log 2>&1 || abort
 	fi
 	check
 }
@@ -610,8 +661,8 @@ compile(){
 	announce_low "Compiling"
 	cd $SCRATCH_DIR/src/$task/
 	cd $(ls)
-	echo "\`make -j$JOBS\`" >>$log 2>&1
-	make -j$JOBS >>$log 2>&1
+	echo "\`make -j$JOBS $@\`" >>$log 2>&1
+	make -j$JOBS $@ >>$log 2>&1
 	check
 }
 
@@ -619,8 +670,8 @@ install(){
 	announce_low "Installing"
 	cd $SCRATCH_DIR/src/$task/
 	cd $(ls)
-	echo "\`make install\`" >>$log 2>&1
-	make install >>$log 2>&1
+	echo "\`make install $@\`" >>$log 2>&1
+	make install $@>>$log 2>&1
 	check
 }
 
@@ -726,7 +777,7 @@ sanity_check_config
 if [ "$(ls -A $SCRATCH_DIR)" != "" ]
 then
 	announce_low "Setting up $SCRATCH_DIR"
-	rm -r $SCRATCH_DIR/*    || abort
+	rm -rf $SCRATCH_DIR/*    || abort
 	touch $SCRATCH_DIR/test || abort
 	rm $SCRATCH_DIR/test    || abort
 	check
@@ -741,7 +792,7 @@ if [ -n "$2" ]
 then
 	in=$2
 else
-	in="./brinstaller.conf"
+	in="./bedrocklinux-installer.conf"
 fi
 announce_low "Verbose logging to $log"
 (
@@ -762,11 +813,20 @@ EOF
 check
 echo "  (consider \`tail -f $log\`)" | tee -a $log
 
-# TODO: do MAKE_STRUCTURE
+### MAKE_STRUCTURE
+task="structure"
+if [ "$MAKE_STRUCTURE" = "1" ]
+then
+	announce_high "Making structure"
+	copy_untar "$BEDROCK_USERLAND_SRC" "$OUTPUT_DIR" "kill_contain"
+	announce_low "Making directories"
+	cd $OUTPUT_DIR
+	./make_dirs.sh
+	check
+fi
 
 ### musl
 task="musl"
-# check if musl is required
 if [ "$MAKE_BRC" = "1" ] ||\
 	[ "$MAKE_BRF" = "1" ] ||\
 	[ "$MAKE_BRP" = "1" ] ||\
@@ -782,24 +842,38 @@ else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
 
-### fuse
-task="fuse"
-# check if fuse is required
-if [ "$MAKE_BRF" = "1" ] || [ "$MAKE_BRP" = "1" ]
+### libcap
+task="libcap"
+if [ "$MAKE_BRC" = "1" ]
 then
-	announce_high "Making fuse"
-	copy_untar "$FUSE_SRC"
-	apply_patches
-	configure --prefix=$dev --disable-shared --enable-static --disable-util
+	announce_high "Making libcap"
+	copy_untar "$LIBCAP_SRC"
 	compile
-	install
+	install DESTDIR=$dev prefix=/ RAISE_SETFCAP=NO
+	cp $dev/sbin/* $OUTPUT_DIR/bedrock/sbin/ >>$log 2>&1
+else
+	echo "(Skipping $task, not required)" | tee -a $log
+fi
+
+### brc
+task="brc"
+if [ "$MAKE_BRC" = "1" ]
+then
+	announce_high "Making brc"
+	announce_low "Compiling"
+	cd $OUTPUT_DIR/src/brc/
+	echo "\`make\`" >>$log 2>&1
+	make >>$log 2>&1
+	check
+	announce_low "Installing"
+	mv $OUTPUT_DIR/src/brc/brc $OUTPUT_DIR/bedrock/bin/
+	check
 else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
 
 ### busybox
 task="busybox"
-# check if busybox is required
 if [ "$MAKE_BUSYBOX" = "1" ]
 then
 	announce_high "Making busybox"
@@ -830,6 +904,20 @@ then
 	mkdir -p $OUTPUT_DIR/bedrock/bin/
 	cp $new_busybox $OUTPUT_DIR/bedrock/bin/busybox
 	check
+else
+	echo "(Skipping $task, not required)" | tee -a $log
+fi
+
+### fuse
+task="fuse"
+if [ "$MAKE_BRF" = "1" ] || [ "$MAKE_BRP" = "1" ]
+then
+	announce_high "Making fuse"
+	copy_untar "$FUSE_SRC"
+	apply_patches
+	configure --prefix=$dev --disable-shared --enable-static --disable-util
+	compile
+	install
 else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
