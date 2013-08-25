@@ -1,0 +1,697 @@
+#!/bin/sh
+### Bedrock Linux 1.0alpha4 Flopsie
+### brinstaller (BedRock installer)
+# This script will (partially) install or update a Bedrock Linux system's core
+# components.
+
+# Search for "END OF FUNCTIONS" to get to where execution actually starts
+
+print_help(){
+cat << 'EOF'
+Usage: brinstaller ARGUMENT
+
+brinstaller will install or update a Bedrock Linux system's core components.
+
+ARGUMENTS:
+   -g  generate a blank configuration file.  If a path is provided after this,
+       the file will be generated in that location; otherwise, it will be
+       generated in the present working directory.
+   -c  use a filled out configuration file.  If a path is provided after this,
+       a file in the provided location will be used; otherwise, this script
+       will look in the present working directory for a file named
+       'brinstaller.conf'
+EOF
+exit
+}
+
+announce_high(){
+	high_task="$1"
+	echo "$1" | tee -a $log
+}
+
+announce_low(){
+	low_task="$1"
+	echo -n "  $1... " | tee -a $log
+}
+
+# report success/failure of last task
+check(){
+	if [ $? -ne 0 ]
+	then
+		echo "Error during $high_task/$low_task" | tee -a $log
+		if [ "$log" != "" ]
+		then
+			echo "See log at"
+			echo "$log"
+		fi
+		exit 1
+	else
+		echo "done."
+		echo "done with $high_task/$low_task" >> $log
+	fi
+}
+
+# report failure
+abort(){
+	echo "Error during $high_task/$low_task" | tee -a $log
+	if [ "$log" != "" ]
+	then
+		echo "See log at"
+		echo "$log"
+	fi
+	exit 1
+}
+
+generate_config(){
+	if [ "$1" != "-g" ]
+	then
+		echo "Something went terribly wrong in or before generate_config(),"
+		echo "aborting."
+		exit 1
+	fi
+	if [ -n "$2" ]
+	then
+		out=$2
+	else
+		out="./brinstaller.conf"
+	fi
+	announce_low "Generating config at $out..."
+	if [ -e $out ]
+	then
+		echo "Problem found."
+		echo "Something already exists at $out."
+		echo "Refusing to overwrite (just in case)."
+		echo "Pick another location or delete or move the file."
+		exit 1
+	fi
+cat << 'EOF' > $out
+### Bedrock Linux 1.0alpha4 Flopsie
+### brinstaller.conf configuration file
+# This file contains configuration options for the Bedrock Linux installer.
+# Read the comments and fill out the appropriate fields, then pass this file as
+# an argument to brinstaller.sh like so:
+# ./brinstaller.sh -c brinstaller.conf
+
+### Note
+# Most of the items below should be set to either:
+# - a "0" or "1" for binary values
+# - a filesystem path or empty string for path values
+# While there should be sanity checks on everything, do be careful to use an
+# expected value just-in-case.
+
+### Install, Update or Generate
+# The installer ultimately has three purposes:
+# - to install a new system
+# - to update an exisitng system
+# - to generate things for some other purpose
+# By specifying which of these is being done, the installer can perform
+# additional sanity checks.
+# Set "INSTALL" to 1 if installing or UPDATE to 1 if updating; set both to zero
+# if you simply want to use the script to generate files for another purpose.
+INSTALL=
+UPDATE=
+
+### Directories
+# Various directories the installer will need specified.
+#
+## Output
+# This directory is where the final output will be placed.  If you are
+# installing a new Bedrock Linux system, be sure you partition, format and
+# mount the desired partitions in this directory *before* running the
+# installer, as the installer will *not* do this for you.  If you are just
+# compiling a handful of components (e.g.: just the busybox executable to
+# update it to fix a security hole), then you can probably skip
+# partitioning/formatting/mounting.
+#
+# e.g.: OUTPUT=/mnt/bedrock
+OUTPUT_DIR=
+#
+## Scratch
+# This is the directory where the installer will place temporary files.
+# e.g.: SCRATCH_DIR=/tmp/brinstaller
+SCRATCH_DIR=
+
+### Components
+# All of the components of a Bedrock Linux 1.0alpha4 Flopsie system which the
+# accompanying script can install are listed below.  Set each one you would
+# like to have the accompanying script install to '1' or '0' otherwise.
+#
+# Enabling some of the items below, but not all, may be useful to update a
+# component.  However, if you would like to install a complete Bedrock Linux
+# system, you'll want to set everything (with the possible exception of
+# MAKE_FSCK)
+#
+## Structure
+# If set to 1, this will create:
+# - Any Bedrock Linux directories which do not already exist
+# - All of the plain-text files
+#   - default/blank config files
+#   - scripts
+MAKE_STRUCTURE=
+## brc
+# The brc (BedRock Chroot) utility.
+MAKE_BRC=
+## brf
+# The brf (BedRock Filesystem) utility.
+MAKE_BRF=
+## brp
+# The brp (BedRock Path) utility.
+MAKE_BRP=
+## busybox
+# Busybox, which provides the majority of the UNIXy utilities.
+MAKE_BUSYBOX=
+## fsck.ext2-4
+# Filesystem checker.  The installer assumes you're using one of the following
+# filesystems:
+# - ext2
+# - ext3
+# - ext4
+# If you're using another one, you may want to install a different filesystem
+# checker manually.
+# Optional for a functional system.
+MAKE_FSCK=
+
+### Source code location
+# For each of the following items, specify where the installer can find either
+# a tarball (which the installer will untar for you) or a directory with the
+# source code (e.g.: untar'd tarball or cloned VCS repo).  Depending on MAKE_*
+# items set above, some of these may be optional.
+#
+## The Bedrock Linux userland
+# The tarball for the Bedrock Linux userland.  Required for:
+# - MAKE_STRUCTURE=1
+# - MAKE_BRC=1
+# - MAKE_BRF=1
+# - MAKE_BRP=1
+# You can probably find a tarball here:
+#     bedrocklinux.org/1.0alpha4/bedrock-userland-1.0alpha4.tar.gz
+# or a git repo here:
+#     https://github.com/paradigm/bedrocklinux-userland
+BEDROCK_USERLAND_SRC=
+## musl-libc
+# The musl C library
+# Required for:
+# - MAKE_BRC=1
+# - MAKE_BRF=1
+# - MAKE_BRP=1
+# - MAKE_BUSYBOX=1
+# - MAKE_FSCK=1
+# You can probably find a tarball or VCS repo here:
+#     http://www.musl-libc.org/
+MUSL_SRC=
+## fuse
+# The FUSE development libraries
+# Required for:
+# - MAKE_BRF=1
+# - MAKE_BRP=1
+# You can probably find a tarball or VCS repo here:
+#     http://fuse.sourceforge.net/
+# Note: This was only tested against exactly version 2.9.3.  The installer will
+# patch the source and may fail against other versions.
+FUSE_SRC=
+## Busybox
+# Required for:
+# - MAKE_BUSYBOX=1
+# You can probably find a tarball or VCS repo here:
+#     http://www.busybox.net/
+BUSYBOX_SRC=
+## fsck.ext2-4
+# Required for:
+# - MAKE_FCSK=1
+# You can probably find a tarball or VCS repo here:
+#     http://e2fsprogs.sourceforge.net/
+FSCK_SRC=
+EOF
+	if [ $? -ne 0 ]
+	then
+		echo "Error generating config file, aborting"
+		exit 1
+	fi
+	echo "done"
+	echo "Fill out the generated configuration file, place required"
+	echo "dependencies where specified in configuration file, and then run this"
+	echo "script again with \`-c $out\`"
+	exit
+}
+
+source_config(){
+	if [ "$1" != "-c" ]
+	then
+		echo "Something went wrong in or before source_config(),"
+		echo "aborting."
+		exit 1
+	fi
+	if [ -n "$2" ]
+	then
+		in=$2
+	else
+		in="./brinstaller.conf"
+	fi
+	announce_low "Parsing config at $in"
+	. $in
+	check
+}
+
+sanity_check_config(){
+	announce_low "Running sanity check on config"
+
+	### Ensure valid values for binary items
+	for OPTION in 'INSTALL' 'UPDATE' 'MAKE_STRUCTURE' 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP' 'MAKE_BUSYBOX' 'MAKE_FSCK'
+	do
+		OPTION_VAL=$(eval 'echo $'$OPTION)
+		if [ "$OPTION_VAL" != "1" ] && [ "$OPTION_VAL" != "0" ]
+		then
+			echo "Problem found."
+			echo "$OPTION should be either \"0\" or \"1\""
+			exit 1
+		fi
+	done
+
+	### Ensure valid value for SRC items
+	for SRC in 'BEDROCK_USERLAND_SRC' 'MUSL_SRC' 'FUSE_SRC' 'BUSYBOX_SRC' 'FSCK_SRC'
+	do
+		SRC_VAL=$(eval 'echo $'$SRC)
+		PROBLEM=0
+		if [ "$SRC_VAL" != "" ] && ! [ -d "$SRC_VAL" ] && ! [ -f "$SRC_VAL" ]
+		then
+			PROBLEM=1
+		fi
+		if [ -d "$SRC_VAL" ] && [ "$(ls $SRC_VAL -A)" = "" ]
+		then
+			PROBLEM=1
+		fi
+		if [ "$PROBLEM" = "1" ]
+		then
+			echo "Problem found."
+			echo "$SRC should be either a path to a non-empty directory, a"
+			echo "tarball, or a empty string"
+			exit 1
+		fi
+	done
+
+	### Ensure required directories exist
+	if ! [ -d "$OUTPUT_DIR" ]
+	then
+		echo "Problem found."
+		echo "OUTPUT_DIR setting \"$OUTPUT_DIR\" is not a directory, aborting"
+		exit 1
+	fi
+	if ! [ -d "$SCRATCH_DIR" ]
+	then
+		echo "Problem found."
+		echo "SCRATCH_DIR setting \"$SCRATCH_DIR\" is not a directory, aborting"
+		exit 1
+	fi
+
+	### Check INSTALL, UPDATE
+	# Ensure not installing and updating
+	if [ "$INSTALL" = "1" ] && [ "$UPDATE" = "1" ]
+	then
+		echo "Problem found."
+		echo "INSTALL and UPDATE should not both be 1"
+		exit 1
+	fi
+	# if installing, we want to sure things aren't already in place
+	if [ "$INSTALL" = "1" ]
+	then
+		# Ensure the MAKE items (baring directories, which could be mounted) do
+		# not already exist
+		if [ "$MAKE_BRC" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/bin/brc" ]
+		then
+			echo "Problem found."
+			echo "INSTALL and MAKE_BRC are set, but brc already seems to be in"
+			echo "place at "
+			echo "$OUTPUT_DIR/bedrock/bin/brc"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BRF" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/sbin/brf" ]
+		then
+			echo "Problem found."
+			echo "INSTALL and MAKE_BRF are set, but brf already seems to be in"
+			echo "place at "
+			echo "$OUTPUT_DIR/bedrock/sbin/brf"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BRP" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
+		then
+			echo "Problem found."
+			echo "INSTALL and MAKE_BRP are set, but brp already seems to be in"
+			echo "place at "
+			echo "$OUTPUT_DIR/bedrock/sbin/brp"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BUSYBOX" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/bin/busybox" ]
+		then
+			echo "Problem found."
+			echo "INSTALL and MAKE_BUSYBOX are set, but busybox already seems"
+			echo "to be in place at "
+			echo "$OUTPUT_DIR/bedrock/bin/busybox"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_FSCK" = 1 ]
+		then
+			if [ -e "$OUTPUT_DIR/sbin/fsck.ext2" ] ||\
+				[ -e "$OUTPUT_DIR/sbin/fsck.ext3" ] ||\
+				[ -e "$OUTPUT_DIR/sbin/fsck.ext4" ]
+			then
+				echo "Problem found."
+				echo "INSTALL and MAKE_FSCK are set, but fsck.ext* already seems to be in"
+				echo "place at "
+				echo "$OUTPUT_DIR/sbin/fsck.ext*"
+				echo "Aborting just in case."
+				exit 1
+			fi
+		fi
+		# Ensure OUTPUT_DIR is a mount point.  If a directory is a mount point,
+		# it will have a different device number from its parent
+		if [ "$(stat -fc%t:%T $OUTPUT_DIR)" = "$(stat -fc%t:%T $OUTPUT_DIR/../)" ]
+		then
+			echo "Problem found."
+			echo "It doesn't look like $OUTPUT_DIR is a mount point, and"
+			echo "INSTALL is set.  There is probably something wrong."
+			echo "Aborting just in case."
+			exit 1
+		fi
+	fi
+	# If updating, we want to ensure what we're replacing exists
+	if [ "$UPDATE" = "1" ]
+	then
+		if [ "$MAKE_BRC" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/bin/brc" ]
+		then
+			echo "Problem found."
+			echo "UPDATE and MAKE_BRC are set, but brc is not already in"
+			echo "place at "
+			echo "$OUTPUT_DIR/bedrock/bin/brc"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BRF" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brf" ]
+		then
+			echo "Problem found."
+			echo "UPDATE and MAKE_BRF are set, but brf is not already in"
+			echo "place at "
+			echo "$OUTPUT_DIR/bedrock/sbin/brf"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BRP" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
+		then
+			echo "Problem found."
+			echo "UPDATE and MAKE_BRP are set, but brp is not already in"
+			echo "place at "
+			echo "$OUTPUT_DIR/bedrock/sbin/brp"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BUSYBOX" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
+		then
+			echo "Problem found."
+			echo "UPDATE and MAKE_BUSYBOX are set, but busybox is not already"
+			echo "in place at "
+			echo "$OUTPUT_DIR/bedrock/bin/busybox"
+			echo "Aborting just in case."
+			exit 1
+		fi
+	fi
+
+	### Ensure source dependencies are met
+	if [ "$BEDROCK_USERLAND_SRC" = "" ]
+	then
+		for COMPONENT in 'MAKE_STRUCTURE' 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP'
+		do
+			VAL=$(eval 'echo $'$COMPONENT)
+			if [ "$VAL" = "1" ]
+			then
+				echo "Problem found."
+				echo "$COMPONENT is set to 1 but a dependency,"
+				echo "BEDROCK_USERLAND_SRC, is undefined"
+				exit 1
+			fi
+		done
+	fi
+	if [ "$MUSL_SRC" = "" ]
+	then
+		for COMPONENT in 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP' 'MAKE_BUSYBOX' 'MAKE_FSCK'
+		do
+			VAL=$(eval 'echo $'$COMPONENT)
+			if [ "$VAL" = "1" ]
+			then
+				echo "Problem found."
+				echo "$COMPONENT is set to 1 but a dependency,"
+				echo "MUSL_SRC, is undefined"
+				exit 1
+			fi
+		done
+	fi
+	if [ "$FUSE_SRC" = "" ]
+	then
+		for COMPONENT in 'MAKE_BRF' 'MAKE_BRP'
+		do
+			VAL=$(eval 'echo $'$COMPONENT)
+			if [ "$VAL" = "1" ]
+			then
+				echo "Problem found."
+				echo "$COMPONENT is set to 1 but a dependency,"
+				echo "MUSL_SRC, is undefined"
+				exit 1
+			fi
+		done
+	fi
+	if [ "$BUSYBOX_SRC" = "" ] && [ "$MAKE_BUSYBOX" = "1" ]
+	then
+		echo "Problem found."
+		echo "MAKE_BUSYBOX is set to 1 but a dependency,"
+		echo "BUSYBOX_SRC, is undefined"
+		exit 1
+	fi
+	if [ "$FSCK_SRC" = "" ] && [ "$MAKE_FSCK" = "1" ]
+	then
+		echo "Problem found."
+		echo "$COMPONENT is set to 1 but a dependency,"
+		echo "FSCK_SRC, is undefined"
+		exit 1
+	fi
+
+	check
+}
+
+copy_untar(){
+	announce_low "Copying/untaring source"
+	mkdir -p $SCRATCH_DIR/src/$task || abort
+	if [ -d $1 ]
+	then
+		cp -r $1 $SCRATCH_DIR/src/$task
+	else
+		cd $SCRATCH_DIR/src/$task
+		echo "\`tar xvf $1\`" >>$log 2>&1
+		tar xvf $1 >>$log 2>&1
+	fi
+	check
+}
+
+# this is only used for fuse at the moment, so things are hardcoded for fuse
+# specifically, only tested against fuse 2.9.3
+# hopefully the patches will be upstreamed and this will be unnecessary
+apply_patches(){
+	announce_low "Patching"
+	# generate patches
+	mkdir -p $SCRATCH_DIR/patches/fuse
+cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-headers.patch
+--- fuse-2.9.3.org/include/fuse_common.h
++++ fuse-2.9.3/include/fuse_common.h
+@@ -28,8 +28,8 @@
+ #define FUSE_MAKE_VERSION(maj, min)  ((maj) * 10 + (min))
+ #define FUSE_VERSION FUSE_MAKE_VERSION(FUSE_MAJOR_VERSION, FUSE_MINOR_VERSION)
+ 
+-/* This interface uses 64 bit off_t */
+-#if _FILE_OFFSET_BITS != 64
++/* This interface uses 64 bit off_t, and only glibc has an implementation with 2 different sizes */
++#if defined(__GLIBC__) && _FILE_OFFSET_BITS != 64
+ #error Please add -D_FILE_OFFSET_BITS=64 to your compile flags!
+ #endif
+ 
+EOF
+cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-lock.patch
+--- fuse-2.9.3.org/lib/fuse_lowlevel.c
++++ fuse-2.9.3/lib/fuse_lowlevel.c
+@@ -24,6 +24,7 @@
+ #include <limits.h>
+ #include <errno.h>
+ #include <assert.h>
++#include <sys/file.h>
+ 
+ #ifndef F_LINUX_SPECIFIC_BASE
+ #define F_LINUX_SPECIFIC_BASE       1024
+--- fuse-2.9.3.org/lib/fuse.c
++++ fuse-2.9.3/lib/fuse.c
+@@ -37,6 +37,7 @@
+ #include <sys/uio.h>
+ #include <sys/time.h>
+ #include <sys/mman.h>
++#include <sys/file.h>
+ 
+ #define FUSE_NODE_SLAB 1
+ 
+EOF
+cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-paths.patch
+--- fuse-2.9.3.org/lib/mount_util.c
++++ fuse-2.9.3/lib/mount_util.c
+@@ -16,6 +16,7 @@
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <limits.h>
++#include <paths.h>
+ #ifndef __NetBSD__
+ #include <mntent.h>
+ #endif
+--- fuse-2.9.3.org/util/fusermount.c
++++ fuse-2.9.3/util/fusermount.c
+@@ -20,6 +20,7 @@
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <pwd.h>
++#include <paths.h>
+ #include <mntent.h>
+ #include <sys/wait.h>
+ #include <sys/stat.h>
+EOF
+	for patch in $SCRATCH_DIR/patches/$task/*
+	do
+		cd $SCRATCH_DIR/src/$task/
+		cd $(ls)
+		echo "patch -p1 < $patch" >>$log 2>&1
+		patch -p1 < $patch >>$log 2>&1 || abort
+	done
+	check
+}
+
+configure(){
+	announce_low "Configuring"
+	cd $SCRATCH_DIR/src/$task/
+	cd $(ls)
+	echo "\`./configure $@\`" >>$log 2>&1
+	./configure $@ >>$log 2>&1
+	check
+}
+
+compile(){
+	announce_low "Compiling"
+	cd $SCRATCH_DIR/src/$task/
+	cd $(ls)
+	echo "\`make -j$(awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo)\`" >>$log 2>&1
+	make -j$(awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo) >>$log 2>&1
+	check
+}
+
+install(){
+	announce_low "Installing"
+	cd $SCRATCH_DIR/src/$task/
+	cd $(ls)
+	echo "\`make install\`" >>$log 2>&1
+	make install >>$log 2>&1
+	check
+}
+
+# END OF FUNCTIONS
+# execution actually starts here
+
+# New users may run this without RTFM'ing.  As a sanity measure, print some
+# help if no flags are provided.
+if [ "$1" != "-c" ] && [ "$1" != "-g" ]
+then
+	print_help
+fi
+
+echo "-----------------------------------------"
+echo "Bedrock Linux 1.0alpha4 Flopsie installer"
+echo "-----------------------------------------"
+echo ""
+
+log="/dev/null"
+announce_high "Early Setup"
+
+# If the first argument is "-g", generate a blank configuration file for this
+# installer.
+if [ "$1" = "-g" ]
+then
+	generate_config "$@"
+fi
+
+# The first argument has to be "-c", indicating a config is available.  Attempt
+# to source it and do some sanity checks on it.
+source_config "$@"
+sanity_check_config
+
+# clear scratch
+if [ "$(ls -A $SCRATCH_DIR)" != "" ]
+then
+	announce_low "Setting up $SCRATCH_DIR"
+	rm -r $SCRATCH_DIR/*    || abort
+	touch $SCRATCH_DIR/test || abort
+	rm $SCRATCH_DIR/test    || abort
+	check
+fi
+
+# set up some vars for stuff in SCRATCH_DIR
+log="$SCRATCH_DIR/log"
+dev="$SCRATCH_DIR/dev"
+
+# setup log
+announce_low "Verbose logging to $log"
+(
+# could not log before this as we did not know where to log
+# populate log with what we have already announced
+cat <<EOF
+-----------------------------------------
+Bedrock Linux 1.0alpha4 Flopsie installer
+-----------------------------------------
+
+Early Setup
+  Parsing config at ./brinstaller.conf... done.
+  Running sanity check on config... done.
+  Setting up /tmp/brscratch... done.
+  Verbose logging to /tmp/brscratch/log...
+EOF
+) > $log
+check
+
+# TODO: do MAKE_STRUCTURE
+
+### musl
+task="musl"
+# check if musl is required
+if [ "$MAKE_BRC" = "1" ] ||\
+	[ "$MAKE_BRF" = "1" ] ||\
+	[ "$MAKE_BRP" = "1" ] ||\
+	[ "$MAKE_BUSYBOX" = "1" ] ||\
+	[ "$MAKE_FSCK" = "1" ]
+then
+	announce_high "Making musl"
+	copy_untar "$MUSL_SRC"
+	configure --prefix=$dev --disable-shared --enable-static
+	compile
+	install
+else
+	echo "(Skipping $task, not required)"
+fi
+
+### fuse
+task="fuse"
+# check if fuse is required
+if [ "$MAKE_BRF" = "1" ] || [ "$MAKE_BRP" = "1" ]
+then
+	announce_high "Making fuse"
+	copy_untar "$FUSE_SRC"
+	apply_patches
+	configure --prefix=$dev --disable-shared --enable-static --disable-util
+	compile
+	install
+else
+	echo "(Skipping $task, not required)"
+fi
+
+## TODO: continue
