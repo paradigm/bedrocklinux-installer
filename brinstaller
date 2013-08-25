@@ -99,6 +99,11 @@ cat << 'EOF' > $out
 # While there should be sanity checks on everything, do be careful to use an
 # expected value just-in-case.
 
+### Make Job count
+# How many things should `make` try to do simultaneously?
+# If you don't know what to do, the $(...) below should pick a sane default.
+JOBS=$(awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo)
+
 ### Install, Update or Generate
 # The installer ultimately has three purposes:
 # - to install a new system
@@ -254,6 +259,14 @@ source_config(){
 
 sanity_check_config(){
 	announce_low "Running sanity check on config"
+
+	### Ensure JOBS is an int
+	if echo $JOBS | grep -q "[^\d]" ||  [ "$JOBS" = "" ] || [ "$JOBS" -lt "1" ]
+	then
+			echo "Problem found."
+			echo "JOBS should be an integer greater than or equal to 1."
+			exit 1
+	fi
 
 	### Ensure valid values for binary items
 	for OPTION in 'INSTALL' 'UPDATE' 'MAKE_STRUCTURE' 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP' 'MAKE_BUSYBOX' 'MAKE_FSCK'
@@ -582,8 +595,8 @@ compile(){
 	announce_low "Compiling"
 	cd $SCRATCH_DIR/src/$task/
 	cd $(ls)
-	echo "\`make -j$(awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo)\`" >>$log 2>&1
-	make -j$(awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo) >>$log 2>&1
+	echo "\`make -j$JOBS\`" >>$log 2>&1
+	make -j$JOBS >>$log 2>&1
 	check
 }
 
