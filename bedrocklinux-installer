@@ -549,26 +549,6 @@ copy_untar(){
 		tar xvf $1 >>$log 2>&1 || abort
 	fi
 
-	# contents probably come in a directory
-	# do we want to keep that containing directory?
-	if [ "$3" = "kill_contain" ]
-	then
-		cd $dest
-		if [ "$(ls -A -1 | wc -l)" -ne 1 ]
-		then
-			echo "Expected exactly one directory in $dest, aborting" | tee -a $log
-			exit
-		fi
-		cont_dir=$(ls -A)
-		cd $cont_dir
-		for file in $(ls -A1)
-		do
-			echo "\`mv $file .." >>$log 2>&1
-			mv $file ..
-		done
-		cd ..
-		rmdir $cont_dir >>$log 2>&1 || abort
-	fi
 	check
 }
 
@@ -759,6 +739,17 @@ echo "-----------------------------------------"
 echo ""
 
 log="/dev/null"
+
+if [ "$(ls -A $OUTPUT_DIR)" != "" ]
+then
+cat << 'EOF'
+WARNING: $OUTPUT_DIR is not empty.  If this is because of a previous run, you
+may want to clear it out.  Be careful not to remove files you may want in
+there, such as a mounted /home directory.
+
+EOF
+fi
+
 announce_high "Early Setup"
 
 # If the first argument is "-g", generate a blank configuration file for this
@@ -803,6 +794,17 @@ cat <<EOF
 Bedrock Linux 1.0alpha4 Flopsie installer
 -----------------------------------------
 
+EOF
+if [ "$(ls -A $OUTPUT_DIR)" != "" ]
+then
+cat << 'EOF'
+WARNING: $OUTPUT_DIR is not empty.  If this is because of a previous run, you
+may want to clear it out.  Be careful not to remove files you may want in
+there, such as a mounted /home directory.
+
+EOF
+fi
+cat <<EOF
 Early Setup
   Parsing config at $in... done.
   Running sanity check on config... done.
@@ -818,10 +820,21 @@ task="structure"
 if [ "$MAKE_STRUCTURE" = "1" ]
 then
 	announce_high "Making structure"
-	copy_untar "$BEDROCK_USERLAND_SRC" "$OUTPUT_DIR" "kill_contain"
+	echo "\`mkdir -p \"$SCRATCH_DIR/userland-tmp\"\`" >>$log 2>&1
+	mkdir -p "$SCRATCH_DIR/userland-tmp" >>$log 2>&1
+	copy_untar "$BEDROCK_USERLAND_SRC" "$SCRATCH_DIR/userland-tmp"
 	announce_low "Making directories"
-	cd $OUTPUT_DIR
+	cd $SCRATCH_DIR/userland-tmp
+	cd $(ls)
 	./make_dirs.sh
+	check
+	announce_low "Copying to $OUTPUT_DIR"
+	cd $SCRATCH_DIR/userland-tmp/
+	cd $(ls)
+	echo '`find . -type d -exec mkdir -p $OUTPUT_DIR/{} \;`' >>$log 2>&1
+	find . -type d -exec mkdir -p $OUTPUT_DIR/{} \; >>$log 2>&1 || abort
+	echo "find . -type f | awk -vOUT=$OUTPUT_DIR '{system(\"cp \"$0\" \"OUT\"/\"$0)}'" >>$log 2>&1
+	find . -type f | awk -vOUT=$OUTPUT_DIR '{system("cp "$0" "OUT"/"$0)}' || abort
 	check
 fi
 
