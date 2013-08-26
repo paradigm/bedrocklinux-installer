@@ -662,15 +662,15 @@ runcmd(){
 
 busybox_defconfig(){
 	announce_low "Generating busybox config"
-	cd $SCRATCH_DIR/src/$task/
-	cd $(ls)
+	runcmd 'cd $SCRATCH_DIR/src/$task/'
+	runcmd 'cd $(ls)'
 	# use busybox's default config
-	make defconfig >>$log 2>&1
+	runcmd 'make defconfig'
 	# ensure static
-	if ! grep -q "^CONFIG_STATIC" .config
+	if ! grep -q "^CONFIG_STATIC" .config 2>/dev/null
 	then
 		echo "CONFIG_STATIC=y" >> .config
-	elif grep -q "^CONFIG_STATIC=n" .config
+	elif grep -q "^CONFIG_STATIC=n" .config 2>/dev/null
 	then
 		sed 's/^CONFIG_STATIC=n/CONFIG_STATIC=y/' .config > .config-new
 		mv .config-new .config
@@ -830,21 +830,18 @@ task="structure"
 if [ "$MAKE_STRUCTURE" = "1" ]
 then
 	announce_high "Making structure"
-	echo "\`mkdir -p \"$SCRATCH_DIR/src/$task\"\`" >>$log 2>&1
-	mkdir -p $SCRATCH_DIR/src/$task >>$log 2>&1
+	runcmd 'mkdir -p $SCRATCH_DIR/src/$task'
 	copy_untar "$BEDROCK_USERLAND_SRC" "$SCRATCH_DIR/src/$task"
 	announce_low "Making directories"
-	cd $SCRATCH_DIR/src/$task/
-	cd $(ls)
-	./make_dirs.sh
+	runcmd 'cd $SCRATCH_DIR/src/$task/'
+	runcmd 'cd $(ls)'
+	runcmd './make_dirs.sh'
 	check
 	announce_low "Copying to $OUTPUT_DIR"
-	cd $SCRATCH_DIR/src/$task/
-	cd $(ls)
-	echo '`find . -type d -exec mkdir -p $OUTPUT_DIR/{} \;`' >>$log 2>&1
-	find . -type d -exec mkdir -p $OUTPUT_DIR/{} \; >>$log 2>&1 || abort
-	echo "find . -type f | awk -vOUT=$OUTPUT_DIR '{system(\"cp \"$0\" \"OUT\"/\"$0)}'" >>$log 2>&1
-	find . -type f | awk -vOUT=$OUTPUT_DIR '{system("cp "$0" "OUT"/"$0)}' || abort
+	runcmd 'cd $SCRATCH_DIR/src/$task/'
+	runcmd 'cd $(ls)'
+	runcmd 'find . -type d -exec mkdir -p $OUTPUT_DIR/{} \;' >>$log 2>&1 || abort
+	runcmd 'find . -type f | awk -vOUT=$OUTPUT_DIR '\''{system("cp "$0" "OUT"/"$0)}'\' || abort
 	check
 else
 	echo "(Skipping $task, not required)" | tee -a $log
@@ -869,13 +866,13 @@ fi
 
 ### libcap
 task="libcap"
-if [ "$MAKE_BRC" = "1" ]
+if [ "$MAKE_CAPSET" = "1" ] || [ "$MAKE_BRC" = "1" ]
 then
 	announce_high "Making libcap"
 	copy_untar "$LIBCAP_SRC"
 	compile
 	install DESTDIR=$dev prefix=/ RAISE_SETFCAP=NO
-	cp $dev/sbin/* $OUTPUT_DIR/bedrock/sbin/ >>$log 2>&1
+	runcmd 'cp $dev/sbin/* $OUTPUT_DIR/bedrock/sbin/' || abort
 else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
@@ -886,12 +883,11 @@ if [ "$MAKE_BRC" = "1" ]
 then
 	announce_high "Making brc"
 	announce_low "Compiling"
-	cd $OUTPUT_DIR/src/brc/
-	echo "\`make\`" >>$log 2>&1
-	make >>$log 2>&1
+	runcmd 'cd $OUTPUT_DIR/src/brc/'
+	runcmd 'make'
 	check
 	announce_low "Installing"
-	mv $OUTPUT_DIR/src/brc/brc $OUTPUT_DIR/bedrock/bin/
+	runcmd 'mv $OUTPUT_DIR/src/brc/brc $OUTPUT_DIR/bedrock/bin/'
 	check
 else
 	echo "(Skipping $task, not required)" | tee -a $log
@@ -906,12 +902,14 @@ then
 	if [ -z "$BUSYBOX_CONFIG" ]
 	then
 		busybox_defconfig
+	else
+		runcmd 'cp "$BUSYBOX_CONFIG" "$SCRATCH_DIR/tmp/$task/.config"'
 	fi
 	compile
 	# older versions of ld apparently break busybox when stripping it.  Test if
 	# it runs stripped vs unstripped.
-	cd $SCRATCH_DIR/src/$task/
-	cd $(ls)
+	runcmd 'cd $SCRATCH_DIR/src/$task/'
+	runcmd 'cd $(ls)'
 	new_busybox=""
 	if ! busybox_test ./busybox
 	then
@@ -926,8 +924,8 @@ then
 		new_busybox=./busybox
 	fi
 	announce_low "Installing"
-	mkdir -p $OUTPUT_DIR/bedrock/bin/
-	cp $new_busybox $OUTPUT_DIR/bedrock/bin/busybox
+	runcmd 'mkdir -p $OUTPUT_DIR/bedrock/bin/'
+	runcmd 'cp $new_busybox $OUTPUT_DIR/bedrock/bin/busybox'
 	check
 else
 	echo "(Skipping $task, not required)" | tee -a $log
@@ -944,11 +942,9 @@ then
 	announce_low "Installing"
 	for n in 2 3 4
 	do
-		echo "\`cp e2fsck/e2fsck $OUTPUT_DIR/sbin/fsck.ext${n}\`" >>$log 2>&1
-		cp e2fsck/e2fsck $OUTPUT_DIR/sbin/fsck.ext${n} >>$log 2>&1 || abort
+		runcmd 'cp e2fsck/e2fsck $OUTPUT_DIR/sbin/fsck.ext${n}' || abort
 	done
-	echo "\`cp misc/fsck $OUTPUT_DIR/sbin/fsck\`" >>$log 2>&1 || abort
-	cp misc/fsck $OUTPUT_DIR/sbin/fsck || abort >>$log 2>&1
+	runcmd 'cp misc/fsck $OUTPUT_DIR/sbin/fsck' || abort
 	check
 else
 	echo "(Skipping $task, not required)" | tee -a $log
@@ -973,4 +969,4 @@ echo "installer at this point in time."
 echo "See $SCRATCH_DIR/dev for dev stack"
 echo "See $SCRATCH_DIR/src for what's left of the source code utilized"
 echo "See $SCRATCH_DIR/log for verbose log"
-## TODO: continue
+echo "See $OUTPUT_DIR for end-result"
