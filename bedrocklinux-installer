@@ -39,7 +39,7 @@ check(){
 	if [ $? -ne 0 ]
 	then
 		echo "Error during $high_task/$low_task" | tee -a $log
-		if [ "$log" != "" ]
+		if [ -n "$log" ]
 		then
 			echo "See log at"
 			echo "$log"
@@ -54,7 +54,7 @@ check(){
 # report failure
 abort(){
 	echo "Error during $high_task/$low_task" | tee -a $log
-	if [ "$log" != "" ]
+	if [ -n "$log" ]
 	then
 		echo "See log at"
 		echo "$log"
@@ -283,7 +283,7 @@ sanity_check_config(){
 	announce_low "Running sanity check on config"
 
 	### Ensure JOBS is an int
-	if echo $JOBS | grep -q "[^0-9]" ||  [ "$JOBS" = "" ] || [ "$JOBS" -lt "1" ]
+	if echo $JOBS | grep -q "[^0-9]" ||  [ -z "$JOBS" ] || [ "$JOBS" -lt "1" ]
 	then
 			echo "Problem found."
 			echo "JOBS should be an integer greater than or equal to 1."
@@ -307,11 +307,11 @@ sanity_check_config(){
 	do
 		SRC_VAL=$(eval 'echo $'$SRC)
 		PROBLEM=0
-		if [ "$SRC_VAL" != "" ] && ! [ -d "$SRC_VAL" ] && ! [ -f "$SRC_VAL" ]
+		if [ -n "$SRC_VAL" ] && ! [ -d "$SRC_VAL" ] && ! [ -f "$SRC_VAL" ]
 		then
 			PROBLEM=1
 		fi
-		if [ -d "$SRC_VAL" ] && [ "$(ls $SRC_VAL -A)" = "" ]
+		if [ -d "$SRC_VAL" ] && [ -z "$(ls $SRC_VAL -A)" ]
 		then
 			PROBLEM=1
 		fi
@@ -454,7 +454,7 @@ sanity_check_config(){
 	fi
 
 	### Ensure source dependencies are met
-	if [ "$BEDROCK_USERLAND_SRC" = "" ]
+	if [ -z "$BEDROCK_USERLAND_SRC" ]
 	then
 		for COMPONENT in 'MAKE_STRUCTURE' 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP'
 		do
@@ -468,7 +468,7 @@ sanity_check_config(){
 			fi
 		done
 	fi
-	if [ "$MUSL_SRC" = "" ]
+	if [ -z "$MUSL_SRC" ]
 	then
 		for COMPONENT in 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP' 'MAKE_BUSYBOX' 'MAKE_FSCK'
 		do
@@ -482,7 +482,7 @@ sanity_check_config(){
 			fi
 		done
 	fi
-	if [ "$LIBCAP_SRC" = "" ]
+	if [ -z "$LIBCAP_SRC" ]
 	then
 		for COMPONENT in 'MAKE_BRC'
 		do
@@ -496,7 +496,7 @@ sanity_check_config(){
 			fi
 		done
 	fi
-	if [ "$FUSE_SRC" = "" ]
+	if [ -z "$FUSE_SRC" ]
 	then
 		for COMPONENT in 'MAKE_BRF' 'MAKE_BRP'
 		do
@@ -510,14 +510,14 @@ sanity_check_config(){
 			fi
 		done
 	fi
-	if [ "$BUSYBOX_SRC" = "" ] && [ "$MAKE_BUSYBOX" = "1" ]
+	if [ -z "$BUSYBOX_SRC" ] && [ "$MAKE_BUSYBOX" = "1" ]
 	then
 		echo "Problem found."
 		echo "MAKE_BUSYBOX is set to 1 but a dependency,"
 		echo "BUSYBOX_SRC, is undefined"
 		exit 1
 	fi
-	if [ "$FSCK_SRC" = "" ] && [ "$MAKE_FSCK" = "1" ]
+	if [ -z "$FSCK_SRC" ] && [ "$MAKE_FSCK" = "1" ]
 	then
 		echo "Problem found."
 		echo "$COMPONENT is set to 1 but a dependency,"
@@ -655,6 +655,11 @@ install(){
 	check
 }
 
+runcmd(){
+	echo "\`$@\`" >>$log 2>&1
+	eval "$@" >>$log 2>&1
+}
+
 busybox_defconfig(){
 	announce_low "Generating busybox config"
 	cd $SCRATCH_DIR/src/$task/
@@ -740,16 +745,6 @@ echo ""
 
 log="/dev/null"
 
-if [ "$(ls -A $OUTPUT_DIR)" != "" ]
-then
-cat << 'EOF'
-WARNING: $OUTPUT_DIR is not empty.  If this is because of a previous run, you
-may want to clear it out.  Be careful not to remove files you may want in
-there, such as a mounted /home directory.
-
-EOF
-fi
-
 announce_high "Early Setup"
 
 # If the first argument is "-g", generate a blank configuration file for this
@@ -764,8 +759,20 @@ fi
 source_config "$@"
 sanity_check_config
 
+if [ -n "$(ls -A $OUTPUT_DIR)" ]
+then
+cat <<EOF
+WARNING: $OUTPUT_DIR is not empty.  If this is because of a previous run, you
+may want to clear it out.  Be careful not to remove files you may want in
+there, such as a mounted /home directory.
+Sleeping for 10 seconds, hit ctrl-c to abort
+
+EOF
+	sleep 10
+fi
+
 # clear scratch
-if [ "$(ls -A $SCRATCH_DIR)" != "" ]
+if [ -n "$(ls -A $SCRATCH_DIR)" ]
 then
 	announce_low "Setting up $SCRATCH_DIR"
 	rm -rf $SCRATCH_DIR/*    || abort
@@ -795,19 +802,22 @@ Bedrock Linux 1.0alpha4 Flopsie installer
 -----------------------------------------
 
 EOF
-if [ "$(ls -A $OUTPUT_DIR)" != "" ]
+cat <<EOF
+Early Setup
+  Parsing config at $in... done.
+  Running sanity check on config... done.
+EOF
+if [ -n "$(ls -A $OUTPUT_DIR)" ]
 then
 cat << 'EOF'
 WARNING: $OUTPUT_DIR is not empty.  If this is because of a previous run, you
 may want to clear it out.  Be careful not to remove files you may want in
 there, such as a mounted /home directory.
+Sleeping for 10 seconds, hit ctrl-c to abort
 
 EOF
 fi
 cat <<EOF
-Early Setup
-  Parsing config at $in... done.
-  Running sanity check on config... done.
   Setting up $SCRATCH_DIR... done.
   Verbose logging to $log...
 EOF
@@ -820,22 +830,24 @@ task="structure"
 if [ "$MAKE_STRUCTURE" = "1" ]
 then
 	announce_high "Making structure"
-	echo "\`mkdir -p \"$SCRATCH_DIR/userland-tmp\"\`" >>$log 2>&1
-	mkdir -p "$SCRATCH_DIR/userland-tmp" >>$log 2>&1
-	copy_untar "$BEDROCK_USERLAND_SRC" "$SCRATCH_DIR/userland-tmp"
+	echo "\`mkdir -p \"$SCRATCH_DIR/src/$task\"\`" >>$log 2>&1
+	mkdir -p $SCRATCH_DIR/src/$task >>$log 2>&1
+	copy_untar "$BEDROCK_USERLAND_SRC" "$SCRATCH_DIR/src/$task"
 	announce_low "Making directories"
-	cd $SCRATCH_DIR/userland-tmp
+	cd $SCRATCH_DIR/src/$task/
 	cd $(ls)
 	./make_dirs.sh
 	check
 	announce_low "Copying to $OUTPUT_DIR"
-	cd $SCRATCH_DIR/userland-tmp/
+	cd $SCRATCH_DIR/src/$task/
 	cd $(ls)
 	echo '`find . -type d -exec mkdir -p $OUTPUT_DIR/{} \;`' >>$log 2>&1
 	find . -type d -exec mkdir -p $OUTPUT_DIR/{} \; >>$log 2>&1 || abort
 	echo "find . -type f | awk -vOUT=$OUTPUT_DIR '{system(\"cp \"$0\" \"OUT\"/\"$0)}'" >>$log 2>&1
 	find . -type f | awk -vOUT=$OUTPUT_DIR '{system("cp "$0" "OUT"/"$0)}' || abort
 	check
+else
+	echo "(Skipping $task, not required)" | tee -a $log
 fi
 
 ### musl
@@ -891,7 +903,7 @@ if [ "$MAKE_BUSYBOX" = "1" ]
 then
 	announce_high "Making busybox"
 	copy_untar "$BUSYBOX_SRC"
-	if [ "$BUSYBOX_CONFIG" = "" ]
+	if [ -z "$BUSYBOX_CONFIG" ]
 	then
 		busybox_defconfig
 	fi
@@ -921,6 +933,27 @@ else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
 
+### fsck
+task="fsck"
+if [ "$MAKE_FSCK" = "1" ]
+then
+	announce_high "Making fsck"
+	copy_untar "$FSCK_SRC"
+	configure LDFLAGS=-static
+	compile LDFLAGS=-static
+	announce_low "Installing"
+	for n in 2 3 4
+	do
+		echo "\`cp e2fsck/e2fsck $OUTPUT_DIR/sbin/fsck.ext${n}\`" >>$log 2>&1
+		cp e2fsck/e2fsck $OUTPUT_DIR/sbin/fsck.ext${n} >>$log 2>&1 || abort
+	done
+	echo "\`cp misc/fsck $OUTPUT_DIR/sbin/fsck\`" >>$log 2>&1 || abort
+	cp misc/fsck $OUTPUT_DIR/sbin/fsck || abort >>$log 2>&1
+	check
+else
+	echo "(Skipping $task, not required)" | tee -a $log
+fi
+
 ### fuse
 task="fuse"
 if [ "$MAKE_BRF" = "1" ] || [ "$MAKE_BRP" = "1" ]
@@ -935,4 +968,9 @@ else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
 
+echo "Successfully completed everything requested which can be done with the"
+echo "installer at this point in time."
+echo "See $SCRATCH_DIR/dev for dev stack"
+echo "See $SCRATCH_DIR/src for what's left of the source code utilized"
+echo "See $SCRATCH_DIR/log for verbose log"
 ## TODO: continue
