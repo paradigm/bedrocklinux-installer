@@ -24,11 +24,13 @@ EOF
 exit
 }
 
+# Announce a high-level item
 announce_high(){
 	high_task="$1"
 	echo "$1" | tee -a $log
 }
 
+# Announce a low-level item
 announce_low(){
 	low_task="$1"
 	echo -n "  $1... " | tee -a $log
@@ -47,7 +49,7 @@ check(){
 		exit 1
 	else
 		echo "done."
-		echo "done with $high_task/$low_task" >> $log
+		echo "done with $high_task/$low_task" >>$log 2>&1
 	fi
 }
 
@@ -75,7 +77,7 @@ generate_config(){
 	else
 		out="./bedrocklinux-installer.conf"
 	fi
-	announce_low "Generating config at $out..."
+	announce_low "Generating config at $out"
 	if [ -e $out ]
 	then
 		echo "Problem found."
@@ -84,7 +86,7 @@ generate_config(){
 		echo "Pick another location or delete or move the file."
 		exit 1
 	fi
-cat << 'EOF' > $out
+cat <<EOF >$out
 ### Bedrock Linux 1.0alpha4 Flopsie
 ### bedrocklinux-installer.conf configuration file
 # This file contains configuration options for the Bedrock Linux installer.
@@ -92,27 +94,22 @@ cat << 'EOF' > $out
 # an argument to bedrocklinux-installer.sh like so:
 # ./bedrocklinux-installer.sh -c bedrocklinux-installer.conf
 
-### Note
-# Most of the items below should be set to either:
-# - a "0" or "1" for binary values
-# - a filesystem path or empty string for path values
-# While there should be sanity checks on everything, do be careful to use an
-# expected value just-in-case.
-
 ### Make Job count
 # How many things should `make` try to do simultaneously?
-# If you don't know what to do, the $(...) below should pick a sane default.
-JOBS=$(awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo)
+# If you aren't sure, the command below should give a sane default:
+#     awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo
+JOBS=
 
-### Install, Update or Generate
+### Install, Update or Neither
 # The installer ultimately has three purposes:
 # - to install a new system
 # - to update an exisitng system
 # - to generate things for some other purpose
 # By specifying which of these is being done, the installer can perform
 # additional sanity checks.
-# Set "INSTALL" to 1 if installing or UPDATE to 1 if updating; set both to zero
-# if you simply want to use the script to generate files for another purpose.
+# Set "INSTALL" to "y" if installing or UPDATE to "y" if updating; set both to
+# "n" if you simply want to use the script to generate files for another
+# purpose.
 INSTALL=
 UPDATE=
 
@@ -139,20 +136,21 @@ SCRATCH_DIR=
 ### Components
 # All of the components of a Bedrock Linux 1.0alpha4 Flopsie system which the
 # accompanying script can install are listed below.  Set each one you would
-# like to have the accompanying script install to '1' or '0' otherwise.
+# like to have the accompanying script install to 'y' or, if you would prefer
+# to have it skipped, to 'n'.
 #
 # Enabling some of the items below, but not all, may be useful to update a
 # component.  However, if you would like to install a complete Bedrock Linux
 # system, you'll want to set everything (with the possible exception of
 # MAKE_FSCK)
 #
-## Structure
+## Userland
 # If set to 1, this will create:
 # - Any Bedrock Linux directories which do not already exist
 # - All of the plain-text files
 #   - default/blank config files
 #   - scripts
-MAKE_STRUCTURE=
+MAKE_USERLAND=
 ## brc
 # The brc (BedRock Chroot) utility.
 MAKE_BRC=
@@ -162,6 +160,9 @@ MAKE_BRF=
 ## brp
 # The brp (BedRock Path) utility.
 MAKE_BRP=
+## caputils
+# POSIX capabilities utilities required for manipulating POSIX capabilities.
+MAKE_CAPUTILS=
 ## busybox
 # Busybox, which provides the majority of the UNIXy utilities.
 MAKE_BUSYBOX=
@@ -184,12 +185,12 @@ MAKE_FSCK=
 #
 ## The Bedrock Linux userland
 # The tarball for the Bedrock Linux userland.  Required for:
-# - MAKE_STRUCTURE=1
-# - MAKE_BRC=1
-# - MAKE_BRF=1
-# - MAKE_BRP=1
+# - MAKE_USERLAND
+# - MAKE_BRC
+# - MAKE_BRF
+# - MAKE_BRP
 # You can probably find a tarball here:
-#     bedrocklinux.org/1.0alpha4/bedrock-userland-1.0alpha4.tar.gz
+#     http://bedrocklinux.org/1.0alpha4/bedrock-userland-1.0alpha4.tar.gz
 # or a git repo here:
 #     https://github.com/paradigm/bedrocklinux-userland
 # This version of this installer is aimed specifically at the 1.0alpha4 version.
@@ -197,11 +198,12 @@ BEDROCK_USERLAND_SRC=
 ## musl-libc
 # The musl C library
 # Required for:
-# - MAKE_BRC=1
-# - MAKE_BRF=1
-# - MAKE_BRP=1
-# - MAKE_BUSYBOX=1
-# - MAKE_FSCK=1
+# - MAKE_BRC
+# - MAKE_BRF
+# - MAKE_BRP
+# - MAKE_BUSYBOX
+# - MAKE_CAPUTILS
+# - MAKE_FSCK
 # You can probably find a tarball or VCS repo here:
 #     http://www.musl-libc.org/
 # This version of this installer was tested against musl version 0.9.12; a
@@ -210,15 +212,25 @@ MUSL_SRC=
 ## libcap
 # The POSIX Capabilities library
 # Required for:
-# - MAKE_BRC=1
+# - MAKE_BRC
+# - MAKE_CAPUTILS
 # You can probably find a tarball or VCS repo here:
 # http://sites.google.com/site/fullycapable
 LIBCAP_SRC=
+## Linux kernel (for headers)
+# The linux kernel is distributed with header files which are needed to compile
+# some components.  Note, the installer will not actually compile the kernel
+# itself.
+# Required for:
+# - MAKE_BRC
+# You can probably find a tarball or VCS repo here:
+# https://www.kernel.org/
+KERNEL_SRC=
 ## fuse
 # The FUSE development libraries
 # Required for:
-# - MAKE_BRF=1
-# - MAKE_BRP=1
+# - MAKE_BRF
+# - MAKE_BRP
 # You can probably find a tarball or VCS repo here:
 #     http://fuse.sourceforge.net/
 # This was only tested against exactly version 2.9.3.  The installer will patch
@@ -226,7 +238,7 @@ LIBCAP_SRC=
 FUSE_SRC=
 ## Busybox
 # Required for:
-# - MAKE_BUSYBOX=1
+# - MAKE_BUSYBOX
 # You can probably find a tarball or VCS repo here:
 #     http://www.busybox.net/
 # Note you need at least 1.20, as there seems to be a bug before that which is
@@ -234,7 +246,7 @@ FUSE_SRC=
 BUSYBOX_SRC=
 ## fsck.ext2-4
 # Required for:
-# - MAKE_FCSK=1
+# - MAKE_FCSK
 # You can probably find a tarball or VCS repo here:
 #     http://e2fsprogs.sourceforge.net/
 FSCK_SRC=
@@ -246,19 +258,34 @@ FSCK_SRC=
 # it here.  If you leave it a blank, a (hopefully sane) default will be chosen
 # for you.  Be careful to ensure it specififes static compilation, that it has
 # all of the applets Bedrock Linux will need, and that it supports "--install".
-# Note this is ignored of MAKE_BUSYBOX is 0.
+# Note this is ignored of MAKE_BUSYBOX is 'n'.
 BUSYBOX_CONFIG=
 EOF
-	if [ $? -ne 0 ]
-	then
-		echo "Error generating config file, aborting"
-		exit 1
-	fi
-	echo "done"
-	echo "Fill out the generated configuration file, place required"
-	echo "dependencies where specified in configuration file, and then run this"
-	echo "script again with \`-c $out\`"
-	exit
+}
+
+define_dependents(){
+	BEDROCK_USERLAND_DEPS="USERLAND BRC BRF BRP"
+	MUSL_DEPS="BRC BRF BRP BUSYBOX CAPUTILS FSCK"
+	LIBCAP_DEPS="BRC CAPUTILS"
+	KERNEL_DEPS="BRC"
+	FUSE_DEPS="BRF BRP"
+	BUSYBOX_DEPS="BUSYBOX"
+	FSCK_DEPS="FSCK"
+}
+
+has_dependents(){
+	define_dependents
+
+	DEPS=$(eval 'echo $'"$(echo $1)_DEPS")
+	for DEP in $(echo $DEPS)
+	do
+		MAKE=$(eval 'echo $MAKE_'"$(echo $DEP)")
+		if [ "$MAKE" = "y" ]
+		then
+			return 0
+		fi
+	done
+	return 1
 }
 
 source_config(){
@@ -281,7 +308,6 @@ source_config(){
 
 sanity_check_config(){
 	announce_low "Running sanity check on config"
-
 	### Ensure JOBS is an int
 	if echo $JOBS | grep -q "[^0-9]" ||  [ -z "$JOBS" ] || [ "$JOBS" -lt "1" ]
 	then
@@ -291,19 +317,19 @@ sanity_check_config(){
 	fi
 
 	### Ensure valid values for binary items
-	for OPTION in 'INSTALL' 'UPDATE' 'MAKE_STRUCTURE' 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP' 'MAKE_BUSYBOX' 'MAKE_FSCK'
+	for OPTION in 'MAKE_USERLAND' 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP' 'MAKE_CAPUTILS' 'MAKE_BUSYBOX' 'MAKE_FSCK'
 	do
 		OPTION_VAL=$(eval 'echo $'$OPTION)
-		if [ "$OPTION_VAL" != "1" ] && [ "$OPTION_VAL" != "0" ]
+		if [ "$OPTION_VAL" != "y" ] && [ "$OPTION_VAL" != "n" ]
 		then
 			echo "Problem found."
-			echo "$OPTION should be either \"0\" or \"1\""
+			echo "$OPTION should be either \"y\" or \"n\""
 			exit 1
 		fi
 	done
 
-	### Ensure valid value for SRC items (and BUSYBOX_CONFIG)
-	for SRC in 'BEDROCK_USERLAND_SRC' 'MUSL_SRC' 'LIBCAP_SRC' 'FUSE_SRC' 'BUSYBOX_SRC' 'FSCK_SRC' 'BUSYBOX_CONFIG'
+	### Ensure valid value for SRC items
+	for SRC in 'BEDROCK_USERLAND_SRC' 'MUSL_SRC' 'LIBCAP_SRC' 'KERNEL_SRC' 'FUSE_SRC' 'BUSYBOX_SRC' 'FSCK_SRC'
 	do
 		SRC_VAL=$(eval 'echo $'$SRC)
 		PROBLEM=0
@@ -324,6 +350,14 @@ sanity_check_config(){
 		fi
 	done
 
+	### Ensure valid value for BUSYBOX_CONFIG
+	if [ "$MAKE_BUSYBOX" = "y" ] && [ -n "$BUSYBOX_CONFIG" ] && ! [ -f "$BUSYBOX_CONFIG" ]
+	then
+		echo "Problem found."
+		echo "BUSYBOX_CONFIG should be a path to a file."
+		exit 1
+	fi
+
 	### Ensure required directories exist
 	if ! [ -d "$OUTPUT_DIR" ]
 	then
@@ -340,18 +374,18 @@ sanity_check_config(){
 
 	### Check INSTALL, UPDATE
 	# Ensure not installing and updating
-	if [ "$INSTALL" = "1" ] && [ "$UPDATE" = "1" ]
+	if [ "$INSTALL" = "y" ] && [ "$UPDATE" = "y" ]
 	then
 		echo "Problem found."
-		echo "INSTALL and UPDATE should not both be 1"
+		echo "INSTALL and UPDATE should not both be \"y\""
 		exit 1
 	fi
 	# if installing, we want to sure things aren't already in place
-	if [ "$INSTALL" = "1" ]
+	if [ "$INSTALL" = "y" ]
 	then
 		# Ensure the MAKE items (baring directories, which could be mounted) do
 		# not already exist
-		if [ "$MAKE_BRC" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/bin/brc" ]
+		if [ "$MAKE_BRC" = "y" ] && [ -e "$OUTPUT_DIR/bedrock/bin/brc" ]
 		then
 			echo "Problem found."
 			echo "INSTALL and MAKE_BRC are set, but brc already seems to be in"
@@ -360,7 +394,7 @@ sanity_check_config(){
 			echo "Aborting just in case."
 			exit 1
 		fi
-		if [ "$MAKE_BRF" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/sbin/brf" ]
+		if [ "$MAKE_BRF" = "y" ] && [ -e "$OUTPUT_DIR/bedrock/sbin/brf" ]
 		then
 			echo "Problem found."
 			echo "INSTALL and MAKE_BRF are set, but brf already seems to be in"
@@ -369,7 +403,7 @@ sanity_check_config(){
 			echo "Aborting just in case."
 			exit 1
 		fi
-		if [ "$MAKE_BRP" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
+		if [ "$MAKE_BRP" = "y" ] && [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
 		then
 			echo "Problem found."
 			echo "INSTALL and MAKE_BRP are set, but brp already seems to be in"
@@ -378,7 +412,16 @@ sanity_check_config(){
 			echo "Aborting just in case."
 			exit 1
 		fi
-		if [ "$MAKE_BUSYBOX" = 1 ] && [ -e "$OUTPUT_DIR/bedrock/bin/busybox" ]
+		if [ "$MAKE_CAPUTILS" = "y" ] && [ -e "$OUTPUT_DIR/bedrock/sbin/setcap" ]
+		then
+			echo "Problem found."
+			echo "INSTALL and MAKE_CAPUTILS are set, but setcap (and possibly"
+			echo "other caputils) already seem to be in place at "
+			echo "$OUTPUT_DIR/bedrock/sbin/setcap"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BUSYBOX" = "y" ] && [ -e "$OUTPUT_DIR/bedrock/bin/busybox" ]
 		then
 			echo "Problem found."
 			echo "INSTALL and MAKE_BUSYBOX are set, but busybox already seems"
@@ -387,7 +430,7 @@ sanity_check_config(){
 			echo "Aborting just in case."
 			exit 1
 		fi
-		if [ "$MAKE_FSCK" = 1 ]
+		if [ "$MAKE_FSCK" = "y" ]
 		then
 			if [ -e "$OUTPUT_DIR/sbin/fsck.ext2" ] ||\
 				[ -e "$OUTPUT_DIR/sbin/fsck.ext3" ] ||\
@@ -413,9 +456,9 @@ sanity_check_config(){
 		fi
 	fi
 	# If updating, we want to ensure what we're replacing exists
-	if [ "$UPDATE" = "1" ]
+	if [ "$UPDATE" = "y" ]
 	then
-		if [ "$MAKE_BRC" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/bin/brc" ]
+		if [ "$MAKE_BRC" = "y" ] && ! [ -e "$OUTPUT_DIR/bedrock/bin/brc" ]
 		then
 			echo "Problem found."
 			echo "UPDATE and MAKE_BRC are set, but brc is not already in"
@@ -424,7 +467,7 @@ sanity_check_config(){
 			echo "Aborting just in case."
 			exit 1
 		fi
-		if [ "$MAKE_BRF" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brf" ]
+		if [ "$MAKE_BRF" = "y" ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brf" ]
 		then
 			echo "Problem found."
 			echo "UPDATE and MAKE_BRF are set, but brf is not already in"
@@ -433,7 +476,7 @@ sanity_check_config(){
 			echo "Aborting just in case."
 			exit 1
 		fi
-		if [ "$MAKE_BRP" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
+		if [ "$MAKE_BRP" = "y" ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
 		then
 			echo "Problem found."
 			echo "UPDATE and MAKE_BRP are set, but brp is not already in"
@@ -442,7 +485,16 @@ sanity_check_config(){
 			echo "Aborting just in case."
 			exit 1
 		fi
-		if [ "$MAKE_BUSYBOX" = 1 ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/brp" ]
+		if [ "$MAKE_CAPUTILS" = "y" ] && ! [ -e "$OUTPUT_DIR/bedrock/sbin/setcap" ]
+		then
+			echo "Problem found."
+			echo "INSTALL and MAKE_CAPUTILS are set, but setcap (and possibly"
+			echo "other caputils) is not already seem to be in place at "
+			echo "$OUTPUT_DIR/bedrock/sbin/setcap"
+			echo "Aborting just in case."
+			exit 1
+		fi
+		if [ "$MAKE_BUSYBOX" = "y" ] && ! [ -e "$OUTPUT_DIR/bedrock/bin/busybox" ]
 		then
 			echo "Problem found."
 			echo "UPDATE and MAKE_BUSYBOX are set, but busybox is not already"
@@ -454,99 +506,41 @@ sanity_check_config(){
 	fi
 
 	### Ensure source dependencies are met
-	if [ -z "$BEDROCK_USERLAND_SRC" ]
-	then
-		for COMPONENT in 'MAKE_STRUCTURE' 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP'
-		do
-			VAL=$(eval 'echo $'$COMPONENT)
-			if [ "$VAL" = "1" ]
-			then
-				echo "Problem found."
-				echo "$COMPONENT is set to 1 but a dependency,"
-				echo "BEDROCK_USERLAND_SRC, is undefined"
-				exit 1
-			fi
-		done
-	fi
-	if [ -z "$MUSL_SRC" ]
-	then
-		for COMPONENT in 'MAKE_BRC' 'MAKE_BRF' 'MAKE_BRP' 'MAKE_BUSYBOX' 'MAKE_FSCK'
-		do
-			VAL=$(eval 'echo $'$COMPONENT)
-			if [ "$VAL" = "1" ]
-			then
-				echo "Problem found."
-				echo "$COMPONENT is set to 1 but a dependency,"
-				echo "MUSL_SRC, is undefined"
-				exit 1
-			fi
-		done
-	fi
-	if [ -z "$LIBCAP_SRC" ]
-	then
-		for COMPONENT in 'MAKE_BRC'
-		do
-			VAL=$(eval 'echo $'$COMPONENT)
-			if [ "$VAL" = "1" ]
-			then
-				echo "Problem found."
-				echo "$COMPONENT is set to 1 but a dependency,"
-				echo "LIBCAP_SRC, is undefined"
-				exit 1
-			fi
-		done
-	fi
-	if [ -z "$FUSE_SRC" ]
-	then
-		for COMPONENT in 'MAKE_BRF' 'MAKE_BRP'
-		do
-			VAL=$(eval 'echo $'$COMPONENT)
-			if [ "$VAL" = "1" ]
-			then
-				echo "Problem found."
-				echo "$COMPONENT is set to 1 but a dependency,"
-				echo "MUSL_SRC, is undefined"
-				exit 1
-			fi
-		done
-	fi
-	if [ -z "$BUSYBOX_SRC" ] && [ "$MAKE_BUSYBOX" = "1" ]
-	then
-		echo "Problem found."
-		echo "MAKE_BUSYBOX is set to 1 but a dependency,"
-		echo "BUSYBOX_SRC, is undefined"
-		exit 1
-	fi
-	if [ -z "$FSCK_SRC" ] && [ "$MAKE_FSCK" = "1" ]
-	then
-		echo "Problem found."
-		echo "$COMPONENT is set to 1 but a dependency,"
-		echo "FSCK_SRC, is undefined"
-		exit 1
-	fi
+	for CMP in $(echo "BEDROCK_USERLAND MUSL LIBCAP KERNEL FUSE BUSYBOX FSCK")
+	do
+		SRC=$(eval 'echo $'"$(echo $CMP)_SRC")
+		if [ -z "$SRC" ]
+		then
+			DEPS=$(eval 'echo $'"$(echo $CMP)_DEPS")
+			for DEP in $(echo $DEPS)
+			do
+				MAKE=$(eval 'echo $MAKE_'"$(echo $DEP)")
+				if [ "$MAKE" = "y" ]
+				then
+					echo "Problem found."
+					echo ""
+					echo "MAKE_${DEP} is set to 1 but a dependency,"
+					echo "${CMP}_SRC, is undefined"
+					exit 1
+				fi
+			done
+		fi
+	done
 
 	check
 }
 
 copy_untar(){
-	announce_low "Copying/untaring source"
+	announce_low "Copying/untaring $1"
 	# we could be copying a directory OR untaring
-	if [ -z "$2" ]
-	then
-		dest=$SCRATCH_DIR/src/$task
-	else
-		dest=$2
-	fi
 
-	mkdir -p $dest || abort
-	if [ -d $1 ]
+	runcmd "mkdir -p $src/$1" || abort
+	if [ -d $2 ]
 	then
-		echo "\`cp -r $1 $dest\`" >>$log 2>&1
-		cp -r $1 $dest >>$log 2>&1 || abort
+		runcmd "cp -r $2 $src/$1"
 	else
-		cd $dest
-		echo "\`tar xvf $1\`" >>$log 2>&1
-		tar xvf $1 >>$log 2>&1 || abort
+		runcmd "cd $src/$1"
+		runcmd "tar xvf $2"
 	fi
 
 	check
@@ -556,7 +550,7 @@ copy_untar(){
 # specifically, only tested against fuse 2.9.3
 # hopefully the patches will be upstreamed and this will be unnecessary
 apply_patches(){
-	announce_low "Patching"
+	announce_low "Patching FUSE"
 	# generate patches
 	mkdir -p $SCRATCH_DIR/patches/fuse
 cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-headers.patch
@@ -618,46 +612,43 @@ cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-paths.patch
  #include <sys/wait.h>
  #include <sys/stat.h>
 EOF
-	for patch in $SCRATCH_DIR/patches/$task/*
+	for patch in $SCRATCH_DIR/patches/fuse/*
 	do
-		cd $SCRATCH_DIR/src/$task/
-		cd $(ls)
-		echo "patch -p1 < $patch" >>$log 2>&1
-		patch -p1 < $patch >>$log 2>&1 || abort
+		runcmd "cd $SCRATCH_DIR/src/FUSE/"
+		runcmd "cd $(ls)"
+		runcmd "patch -p1 < $patch" >>$log 2>&1 || abort
 	done
 	check
 }
 
+runcmd(){
+	echo "" >>$log 2>&1
+	echo "\`$@\`" >>$log 2>&1
+	eval "$@" >>$log 2>&1
+}
+
 configure(){
-	announce_low "Configuring"
-	cd $SCRATCH_DIR/src/$task/
-	cd $(ls)
-	echo "\`./configure $@\`" >>$log 2>&1
-	./configure $@ >>$log 2>&1
+	announce_low "Configuring $task"
+	runcmd "cd $src/$task/"
+	runcmd "cd $(ls)"
+	runcmd "./configure $@"
 	check
 }
 
 compile(){
-	announce_low "Compiling"
-	cd $SCRATCH_DIR/src/$task/
-	cd $(ls)
-	echo "\`make -j$JOBS $@\`" >>$log 2>&1
-	make -j$JOBS $@ >>$log 2>&1
+	announce_low "Compiling $task"
+	runcmd "cd $src/$task/"
+	runcmd "cd $(ls)"
+	runcmd "make -j$JOBS $@"
 	check
 }
 
 install(){
-	announce_low "Installing"
-	cd $SCRATCH_DIR/src/$task/
-	cd $(ls)
-	echo "\`make install $@\`" >>$log 2>&1
-	make install $@>>$log 2>&1
+	announce_low "Installing $task"
+	runcmd "cd $src/$task/"
+	runcmd "cd $(ls)"
+	runcmd "make install $@"
 	check
-}
-
-runcmd(){
-	echo "\`$@\`" >>$log 2>&1
-	eval "$@" >>$log 2>&1
 }
 
 busybox_defconfig(){
@@ -669,11 +660,11 @@ busybox_defconfig(){
 	# ensure static
 	if ! grep -q "^CONFIG_STATIC" .config 2>/dev/null
 	then
-		echo "CONFIG_STATIC=y" >> .config
+		runcmd 'echo "CONFIG_STATIC=y" >> .config'
 	elif grep -q "^CONFIG_STATIC=n" .config 2>/dev/null
 	then
-		sed 's/^CONFIG_STATIC=n/CONFIG_STATIC=y/' .config > .config-new
-		mv .config-new .config
+		runcmd 'sed "s/^CONFIG_STATIC=n/CONFIG_STATIC=y/" .config > .config-new'
+		runcmd 'mv .config-new .config'
 	fi
 	check
 }
@@ -728,6 +719,19 @@ busybox_test(){
 	return 0
 }
 
+ensure_static(){
+	announce_low "Ensuring $1 is static"
+	if ldd "$1" >>$log 2>&1
+	then
+		echo "The file at"
+		echo "$1"
+		echo "Does not appear to be a statically-linked executable."
+		echo "Looks like maybe something went wrong.  Aborting."
+		exit 1
+	fi
+	check
+}
+
 # END OF FUNCTIONS
 # execution actually starts here
 
@@ -743,6 +747,7 @@ echo "Bedrock Linux 1.0alpha4 Flopsie installer"
 echo "-----------------------------------------"
 echo ""
 
+# can't log yet since SCRATCH hasn't yet been defined
 log="/dev/null"
 
 announce_high "Early Setup"
@@ -784,6 +789,7 @@ fi
 # set up some vars for stuff in SCRATCH_DIR
 log="$SCRATCH_DIR/log"
 dev="$SCRATCH_DIR/dev"
+src="$SCRATCH_DIR/src"
 
 # setup log
 if [ -n "$2" ]
@@ -825,87 +831,83 @@ EOF
 check
 echo "  (consider \`tail -f $log\`)" | tee -a $log
 
-### MAKE_STRUCTURE
-task="structure"
-if [ "$MAKE_STRUCTURE" = "1" ]
-then
-	announce_high "Making structure"
-	runcmd 'mkdir -p $SCRATCH_DIR/src/$task'
-	copy_untar "$BEDROCK_USERLAND_SRC" "$SCRATCH_DIR/src/$task"
-	announce_low "Making directories"
-	runcmd 'cd $SCRATCH_DIR/src/$task/'
-	runcmd 'cd $(ls)'
-	runcmd './make_dirs.sh'
-	check
-	announce_low "Copying to $OUTPUT_DIR"
-	runcmd 'cd $SCRATCH_DIR/src/$task/'
-	runcmd 'cd $(ls)'
-	runcmd 'find . -type d -exec mkdir -p $OUTPUT_DIR/{} \;' >>$log 2>&1 || abort
-	runcmd 'find . -type f | awk -vOUT=$OUTPUT_DIR '\''{system("cp "$0" "OUT"/"$0)}'\' || abort
-	check
-else
-	echo "(Skipping $task, not required)" | tee -a $log
-fi
 
-### musl
-task="musl"
-if [ "$MAKE_BRC" = "1" ] ||\
-	[ "$MAKE_BRF" = "1" ] ||\
-	[ "$MAKE_BRP" = "1" ] ||\
-	[ "$MAKE_BUSYBOX" = "1" ] ||\
-	[ "$MAKE_FSCK" = "1" ]
+announce_high "Preparing source"
+for CMP in $(echo "BEDROCK_USERLAND MUSL LIBCAP KERNEL FUSE BUSYBOX FSCK")
+do
+	if has_dependents $CMP
+	then
+		SRC=$(eval 'echo $'"$(echo $CMP)_SRC")
+		copy_untar "$CMP" "$SRC"
+	else
+		echo "  (Skipping $CMP, not required)" | tee -a $log
+	fi
+done
+
+announce_high "Preparing development stack"
+task="MUSL"
+if has_dependents "$task"
 then
-	announce_high "Making musl"
-	copy_untar "$MUSL_SRC"
 	configure --prefix=$dev --disable-shared --enable-static
 	compile
 	install
+	announce_low "Fixing lib/lib64 confusion"
+	runcmd "ln -s $dev/lib $dev/lib64"
+	check
 else
-	echo "(Skipping $task, not required)" | tee -a $log
+	echo "  (Skipping $task, not required)" | tee -a $log
 fi
-
-### libcap
-task="libcap"
-if [ "$MAKE_CAPSET" = "1" ] || [ "$MAKE_BRC" = "1" ]
+task="LIBCAP"
+if has_dependents "$task"
 then
-	announce_high "Making libcap"
-	copy_untar "$LIBCAP_SRC"
 	compile
 	install DESTDIR=$dev prefix=/ RAISE_SETFCAP=NO
-	runcmd 'cp $dev/sbin/* $OUTPUT_DIR/bedrock/sbin/' || abort
+	for exe in $dev/sbin/*
+	do
+		ensure_static "$exe"
+	done
+else
+	echo "  (Skipping $task, not required)" | tee -a $log
+fi
+task="FUSE"
+if has_dependents "$task"
+then
+	apply_patches
+	configure --prefix=$dev --disable-shared --enable-static --disable-util
+	compile 'CC='"$dev/bin/musl-gcc"
+fi
+task="KERNEL"
+if has_dependents "$task"
+then
+	compile 'headers_install INSTALL_HDR_PATH='"$dev"
+else
+	echo "  (Skipping $task, not required)" | tee -a $log
+fi
+
+announce_high "Compiling components"
+task="BRC"
+if [ "$MAKE_BRC" = "y" ]
+then
+	announce_low "Compiling BRC"
+	runcmd 'cd $SCRATCH_DIR/src/BEDROCK_USERLAND/'
+	runcmd 'cd $(ls)'
+	runcmd 'cd src/brc'
+	runcmd 'make CC='"$dev/bin/musl-gcc"
+	check
+	ensure_static 'brc'
 else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
-
-### brc
-task="brc"
-if [ "$MAKE_BRC" = "1" ]
+task="BUSYBOX"
+if [ "$MAKE_BUSYBOX" = "y" ]
 then
-	announce_high "Making brc"
-	announce_low "Compiling"
-	runcmd 'cd $OUTPUT_DIR/src/brc/'
-	runcmd 'make'
-	check
-	announce_low "Installing"
-	runcmd 'mv $OUTPUT_DIR/src/brc/brc $OUTPUT_DIR/bedrock/bin/'
-	check
-else
-	echo "(Skipping $task, not required)" | tee -a $log
-fi
-
-### busybox
-task="busybox"
-if [ "$MAKE_BUSYBOX" = "1" ]
-then
-	announce_high "Making busybox"
-	copy_untar "$BUSYBOX_SRC"
 	if [ -z "$BUSYBOX_CONFIG" ]
 	then
 		busybox_defconfig
 	else
 		runcmd 'cp "$BUSYBOX_CONFIG" "$SCRATCH_DIR/tmp/$task/.config"'
 	fi
-	compile
+	compile 'CC='"$dev/bin/musl-gcc"
 	# older versions of ld apparently break busybox when stripping it.  Test if
 	# it runs stripped vs unstripped.
 	runcmd 'cd $SCRATCH_DIR/src/$task/'
@@ -923,50 +925,16 @@ then
 	else
 		new_busybox=./busybox
 	fi
-	announce_low "Installing"
-	runcmd 'mkdir -p $OUTPUT_DIR/bedrock/bin/'
-	runcmd 'cp $new_busybox $OUTPUT_DIR/bedrock/bin/busybox'
-	check
+	ensure_static "$new_busybox"
 else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
-
-### fsck
-task="fsck"
-if [ "$MAKE_FSCK" = "1" ]
+task="FSCK"
+if [ "$MAKE_FSCK" = "y" ]
 then
-	announce_high "Making fsck"
-	copy_untar "$FSCK_SRC"
 	configure LDFLAGS=-static
 	compile LDFLAGS=-static
-	announce_low "Installing"
-	for n in 2 3 4
-	do
-		runcmd 'cp e2fsck/e2fsck $OUTPUT_DIR/sbin/fsck.ext${n}' || abort
-	done
-	runcmd 'cp misc/fsck $OUTPUT_DIR/sbin/fsck' || abort
-	check
+	ensure_static 'e2fsck/e2fsck'
 else
 	echo "(Skipping $task, not required)" | tee -a $log
 fi
-
-### fuse
-task="fuse"
-if [ "$MAKE_BRF" = "1" ] || [ "$MAKE_BRP" = "1" ]
-then
-	announce_high "Making fuse"
-	copy_untar "$FUSE_SRC"
-	apply_patches
-	configure --prefix=$dev --disable-shared --enable-static --disable-util
-	compile
-	install
-else
-	echo "(Skipping $task, not required)" | tee -a $log
-fi
-
-echo "Successfully completed everything requested which can be done with the"
-echo "installer at this point in time."
-echo "See $SCRATCH_DIR/dev for dev stack"
-echo "See $SCRATCH_DIR/src for what's left of the source code utilized"
-echo "See $SCRATCH_DIR/log for verbose log"
-echo "See $OUTPUT_DIR for end-result"
