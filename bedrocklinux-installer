@@ -209,7 +209,7 @@ SCRATCH_DIR=
 # MAKE_FSCK)
 #
 ## Userland
-# If set to 1, this will create:
+# If set to 'y', this will create:
 # - Any Bedrock Linux directories which do not already exist
 # - All of the plain-text files
 #   - default/blank config files
@@ -324,6 +324,7 @@ FSCK_SRC=
 # Note this is ignored of MAKE_BUSYBOX is 'n'.
 BUSYBOX_CONFIG=
 EOF
+exit 0
 }
 
 source_config(){
@@ -812,6 +813,7 @@ then
 	apply_patches
 	configure --prefix=$dev --disable-shared --enable-static --disable-util
 	compile 'CC='"$dev/bin/musl-gcc"
+	install
 fi
 task="kernel_headers"
 if has_dependents "$task"
