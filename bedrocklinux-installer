@@ -1,569 +1,138 @@
 #!/bin/sh
 ### Bedrock Linux 1.0alpha4 Flopsie
-### bedrocklinux-installer (BedRock installer)
-# This script will (partially) install or update a Bedrock Linux system's core
-# components.
-
-# Search for "END OF FUNCTIONS" to find where execution actually starts
-
-### output
-# functions to output information to user
+### bedrocklinux-installer
 
 print_help(){
 cat <<EOF
-Usage: bedrocklinux-installer ARGUMENT
+Usage: bedrocklinux-installer make [components]
+   or: bedrocklinux-installer install [install directory] [components]
 
-bedrocklinux-installer will install or update a Bedrock Linux system's core components.
+To compile components, have "make" be the first argument and the following
+arguments be components to install.  This can be done as a non-root user.  It
+will also compile the dependencies.
 
-ARGUMENTS:
-   -g  generate a blank configuration file.  If a path is provided after this,
-       the file will be generated in that location; otherwise, it will be
-       generated in the present working directory.
-   -c  use a filled out configuration file.  If a path is provided after this,
-       a file in the provided location will be used; otherwise, this script
-       will look in the present working directory for a file named
-       'bedrocklinux-installer.conf'
+To install components, first make them with the above instructions if they need
+to be made (i.e.: if the show up under "Make and install" below).  Then run
+bedrocklinux-installer with "install" as the first argument and the directory
+in which you would like to install as the second argument.  The following
+arguments should be a list of components to install.
+
+The source code for the components to be compiled should be in a "src"
+directory in the present working directory, either as a tarball or a directory
+(such as the untarred tarball or a VCS repository).  The file or directory name
+should have the name of the component, such as "busybox" or "fuse" somewhere
+within it.
+
+Temporary files are created and stored in
+"/tmp/bedrocklinux-installer-tmp-$(whoami)".  This includes the development
+stack (musl-gcc, fuse, etc).
+
+Components:
+Make and install:
+  all           the entire (core) Bedrock Linux system.
+  brc           brc (BedRock Chroot)
+  bru           bru (BedRock Union filesystem)
+  brp           brp (BedRock Path)
+  busybox       busybox
+  caputils      setcap and getcap utilities
+Make only:
+  devstack      the development stack (headers, musl, fuse)
+  headers       linux headers
+  musl          the musl c library
+  fuse          the fuse libary
+Install only:
+  directories   create directories of core Bedrock Linux system
+  plaintext     create plain text files (scripts, config files, etc)
+  permissions   set permissions on the install directory
+
 EOF
 exit
 }
 
-# Announce a high-level item
+source_help(){
+	echo "Error."
+	echo "Cannot find required source."
+	case $task in
+		"brc"|"bru"|"brp")
+cat <<EOF
+The source for $task should be bundled with this script.  Try deleting
+everything and downloading the tarball containing this script and bundled
+source from here:
+    http://bedrocklinux.org/1.0alpha4/bedrock-userland-1.0alpha4.tar.gz
+EOF
+			exit
+			;;
+		"musl")
+			URL="http://www.musl-libc.org"
+			;;
+		"linux")
+			URL="https://www.kernel.org/"
+			;;
+		"fuse")
+			URL="http://fuse.sourceforge.net/"
+			;;
+		"busybox")
+			URL="http://fuse.sourceforge.net/"
+			;;
+		"cap")
+			URL="http://sites.google.com/site/fullycapable"
+			;;
+	esac
+cat <<EOF
+You can probably find a tarball or VCS repo for musl here:
+    $URL
+This version of this installer was tested against musl version 0.9.12; newer
+version will probably be fine.  Place the source (tarball or directory) in:
+    $pwd/src
+with a file name containing the string "$task".
+EOF
+	exit 1
+}
+
 announce_high(){
-	high_task="$1"
 	echo "$1" | tee -a $log
 }
 
-# Announce a low-level item
-# should be closed with "check", "abort" or "error"
 announce_low(){
-	low_task="$1"
 	echo -n "  $1... " | tee -a $log
 }
 
-# report success/failure of last task
+abort(){
+	echo "error" | tee -a $log
+	echo "See log at"
+	echo "$log"
+	exit 1
+}
+
 check(){
 	if [ $? -ne 0 ]
 	then
-		echo "Error during $high_task/$low_task" | tee -a $log
-		if [ -n "$log" ]
-		then
-			echo "See log at"
-			echo "$log"
-		fi
-		exit 1
+		abort
 	else
-		echo "done."
-		echo "done with $high_task/$low_task" >>$log 2>&1
+		echo "done"
 	fi
-}
-
-# report failure
-abort(){
-	echo "Error during $high_task/$low_task" | tee -a $log
-	if [ -n "$log" ]
-	then
-		echo "See log at"
-		echo "$log"
-	fi
-	exit 1
-}
-
-# known/describable error occurred
-error(){
-	echo "Problem found."
-	echo ""
-	echo "$1"
-	exit 1
-}
-
-
-### shell script support functions
-# just shortcuts for common operations to keep code readable
-
-# given a string, return the value of the variable represented by that string
-get_val(){
-	echo $(eval 'echo $'"$(echo $1)")
-}
-# uppercases a string
-upper(){
-	echo $1 | tr '[a-z]' '[A-Z]'
-}
-
-### package info
-
-get_package_info(){
-	all_pkgs_make="bedrock_userland caputils brc brf brp busybox fsck"
-	all_pkgs_src="bedrock_userland musl libcap kernel_headers fuse busybox fsck"
-	bedrock_userland_deps="bedrock_userland brc brf brp"
-
-	musl_deps="brc brf brp caputils fsck"
-	libcap_deps="brc caputils"
-	kernel_headers_deps="brc"
-	fuse_deps="brf brp"
-	busybox_deps="busybox"
-	fsck_deps="fsck"
-
-	brc_files="/bedrock/bin/brc"
-	brf_files="/bedrock/sbin/brf"
-	brp_files="/bedrock/sbin/brp"
-	caputils_files="/bedrock/sbin/capsh /bedrock/sbin/getcap /bedrock/sbin/setcap"
-	fsck_files="/sbin/fsck.ext2 /sbin/fsck.ext3 /sbin/fsck.ext4"
-}
-
-# returns 0 if the argument has dependents
-has_dependents(){
-	get_package_info
-	deps=$(get_val "${1}_deps")
-	for dep in $(echo $deps)
-	do
-		DEP=$(upper $dep)
-		val=$(get_val "MAKE_${DEP}")
-		if [ "$val" = "y" ]
-		then
-			return 0
-		fi
-	done
-	return 1
-}
-
-### config file
-
-generate_config(){
-	if [ "$1" != "-g" ]
-	then
-		echo "Something went terribly wrong in or before generate_config(),"
-		echo "aborting."
-		exit 1
-	fi
-	if [ -n "$2" ]
-	then
-		cfgfile=$2
-	else
-		cfgfile="./bedrocklinux-installer.conf"
-	fi
-	announce_low "Generating config at $cfgfile"
-	if [ -e $cfgfile ]
-	then
-		echo "Problem found."
-		echo "Something already exists at $cfgfile"
-		echo "Refusing to overwrite (just in case)."
-		echo "Pick another location or delete or move the file."
-		exit 1
-	fi
-cat <<EOF >$cfgfile
-### Bedrock Linux 1.0alpha4 Flopsie
-### bedrocklinux-installer.conf configuration file
-# This file contains configuration options for the Bedrock Linux installer.
-# Read the comments and fill out the appropriate fields, then pass this file as
-# an argument to bedrocklinux-installer.sh like so:
-# ./bedrocklinux-installer.sh -c bedrocklinux-installer.conf
-
-### Make Job count
-# How many things should `make` try to do simultaneously?
-# If you aren't sure, the command below should give a sane default:
-#     awk '/^processor/{x=$3}END{print x+2}' /proc/cpuinfo
-JOBS=
-
-### Install, Update or Neither
-# The installer ultimately has three purposes:
-# - to install a new system
-# - to update an exisitng system
-# - to generate things for some other purpose
-# By specifying which of these is being done, the installer can perform
-# additional sanity checks.
-# Set "INSTALL" to "y" if installing or UPDATE to "y" if updating; set both to
-# "n" if you simply want to use the script to generate files for another
-# purpose.
-INSTALL=
-UPDATE=
-
-### Directories
-# Various directories the installer will need specified.
-#
-## Output
-# This directory is where the final output will be placed.  If you are
-# installing a new Bedrock Linux system, be sure you partition, format and
-# mount the desired partitions in this directory *before* running the
-# installer, as the installer will *not* do this for you.  If you are just
-# compiling a handful of components (e.g.: just the busybox executable to
-# update it to fix a security hole), then you can probably skip
-# partitioning/formatting/mounting.
-#
-# e.g.: OUTPUT=/mnt/bedrock
-OUTPUT_DIR=
-#
-## Scratch
-# This is the directory where the installer will place temporary files.
-# e.g.: SCRATCH_DIR=/tmp/bedrocklinux-installer-scratch
-SCRATCH_DIR=
-
-### Components
-# All of the components of a Bedrock Linux 1.0alpha4 Flopsie system which the
-# accompanying script can install are listed below.  Set each one you would
-# like to have the accompanying script install to 'y' or, if you would prefer
-# to have it skipped, to 'n'.
-#
-# Enabling some of the items below, but not all, may be useful to update a
-# component.  However, if you would like to install a complete Bedrock Linux
-# system, you'll want to set everything (with the possible exception of
-# MAKE_FSCK)
-#
-## Userland
-# If set to 'y', this will create:
-# - Any Bedrock Linux directories which do not already exist
-# - All of the plain-text files
-#   - default/blank config files
-#   - scripts
-MAKE_BEDROCK_USERLAND=
-## brc
-# The brc (BedRock Chroot) utility.
-MAKE_BRC=
-## brf
-# The brf (BedRock Filesystem) utility.
-MAKE_BRF=
-## brp
-# The brp (BedRock Path) utility.
-MAKE_BRP=
-## caputils
-# POSIX capabilities utilities required for manipulating POSIX capabilities.
-MAKE_CAPUTILS=
-## busybox
-# Busybox, which provides the majority of the UNIXy utilities.
-MAKE_BUSYBOX=
-## fsck.ext2-4
-# Filesystem checker.  The installer assumes you're using one of the following
-# filesystems:
-# - ext2
-# - ext3
-# - ext4
-# If you're using another one, you may want to install a different filesystem
-# checker manually.
-# Optional for a functional system.
-MAKE_FSCK=
-
-### Source code location
-# For each of the following items, specify where the installer can find either
-# a tarball (which the installer will untar for you) or a directory with the
-# source code (e.g.: untar'd tarball or cloned VCS repo).  Depending on MAKE_*
-# items set above, some of these may be optional.
-#
-## The Bedrock Linux userland
-# The tarball for the Bedrock Linux userland.  Required for:
-# - MAKE_USERLAND
-# - MAKE_BRC
-# - MAKE_BRF
-# - MAKE_BRP
-# You can probably find a tarball here:
-#     http://bedrocklinux.org/1.0alpha4/bedrock-userland-1.0alpha4.tar.gz
-# or a git repo here:
-#     https://github.com/paradigm/bedrocklinux-userland
-# This version of this installer is aimed specifically at the 1.0alpha4 version.
-BEDROCK_USERLAND_SRC=
-## musl-libc
-# The musl C library
-# Required for:
-# - MAKE_BRC
-# - MAKE_BRF
-# - MAKE_BRP
-# - MAKE_CAPUTILS
-# - MAKE_FSCK
-# You can probably find a tarball or VCS repo here:
-#     http://www.musl-libc.org/
-# This version of this installer was tested against musl version 0.9.12; a
-# newer version will probably be fine.
-MUSL_SRC=
-## libcap
-# The POSIX Capabilities library
-# Required for:
-# - MAKE_BRC
-# - MAKE_CAPUTILS
-# You can probably find a tarball or VCS repo here:
-# http://sites.google.com/site/fullycapable
-LIBCAP_SRC=
-## Linux kernel (for headers)
-# The linux kernel is distributed with header files which are needed to compile
-# some components.  Note, the installer will not actually compile the kernel
-# itself.
-# Required for:
-# - MAKE_BRC
-# You can probably find a tarball or VCS repo here:
-# https://www.kernel.org/
-KERNEL_HEADERS_SRC=
-## fuse
-# The FUSE development libraries
-# Required for:
-# - MAKE_BRF
-# - MAKE_BRP
-# You can probably find a tarball or VCS repo here:
-#     http://fuse.sourceforge.net/
-# This was only tested against exactly version 2.9.3.  The installer will patch
-# the source and may fail against other versions.
-FUSE_SRC=
-## Busybox
-# Required for:
-# - MAKE_BUSYBOX
-# You can probably find a tarball or VCS repo here:
-#     http://www.busybox.net/
-# Note you need at least 1.20, as there seems to be a bug before that which is
-# problematic with Bedrock Linux.
-BUSYBOX_SRC=
-## fsck.ext2-4
-# Required for:
-# - MAKE_FCSK
-# You can probably find a tarball or VCS repo here:
-#     http://e2fsprogs.sourceforge.net/
-FSCK_SRC=
-
-### Miscellaneous
-#
-## busybox config
-# If you would like to specify the busybox config to use, provide the path to
-# it here.  If you leave it a blank, a (hopefully sane) default will be chosen
-# for you.  Be careful to ensure it specififes static compilation, that it has
-# all of the applets Bedrock Linux will need, and that it supports "--install".
-# Note this is ignored of MAKE_BUSYBOX is 'n'.
-BUSYBOX_CONFIG=
-EOF
-exit 0
-}
-
-source_config(){
-	if [ "$1" != "-c" ]
-	then
-		error "Something went wrong in or before source_config,"
-	fi
-	if [ -n "$2" ]
-	then
-		cfgfile=$2
-	else
-		cfgfile="./bedrocklinux-installer.conf"
-	fi
-	announce_low "Parsing config at $cfgfile"
-	. $cfgfile
-	check
-}
-
-sanity_check_config(){
-	announce_low "Running sanity check on config"
-	# Ensure JOBS is an int
-	if echo $JOBS | grep -q "[^0-9]" ||  [ -z "$JOBS" ] || [ "$JOBS" -lt "1" ]
-	then
-			error "JOBS should be an integer greater than or equal to 1."
-	fi
-
-	# Ensure valid value for BUSYBOX_CONFIG
-	if [ "$MAKE_BUSYBOX" = "y" ] && [ -n "$BUSYBOX_CONFIG" ] && ! [ -f "$BUSYBOX_CONFIG" ]
-	then
-		error "BUSYBOX_CONFIG should be a path to a file."
-	fi
-
-	### Ensure required directories exist
-	if ! [ -d "$OUTPUT_DIR" ]
-	then
-		error "OUTPUT_DIR setting \"$OUTPUT_DIR\" is not a directory, aborting"
-	fi
-	if ! [ -d "$SCRATCH_DIR" ]
-	then
-		error "SCRATCH_DIR setting \"$SCRATCH_DIR\" is not a directory, aborting"
-	fi
-
-	for pkg in $(echo $all_pkgs_make)
-	do
-		# ensure setting has sane value
-		PKG=$(upper $pkg)
-		val=$(get_val "MAKE_${PKG}")
-		if [ "$val" != "y" ] && [ "$val" != "n" ]
-		then
-			error "MAKE_$PKG should be set to either 'y' or 'n'"
-		fi
-	done
-
-	for pkg in $(echo $all_pkgs_src)
-	do
-		# ensure setting has sane value
-		PKG=$(upper $pkg)
-		val=$(get_val "${PKG}_SRC")
-		if [ -n "$val" ] && ! [ -d "$val" ] && ! [ -f "$val" ]
-		then
-			error "${PKG}_SRC should be either empty or point to a tarball or directory with source code in it."
-		fi
-		# if src pkg is empty, ensure dependents aren't enable
-		if [ -z "$val" ]
-		then
-			deps=$(get_val "${pkg}_deps")
-			for dep in $(echo $deps)
-			do
-				DEP=$(upper $dep)
-				val=$(get_val "MAKE_${DEP}")
-				if [ "$val" = "y" ]
-				then
-					error "MAKE_${DEP} is set to 'y' but a dependency, ${PKG}_SRC, is empty"
-				fi
-			done
-		fi
-	done
-
-	# Ensure not installing and updating
-	if [ "$INSTALL" = "y" ] && [ "$UPDATE" = "y" ]
-	then
-		error "INSTALL and UPDATE should not both be 'y'"
-	fi
-
-	if [ "$INSTALL" = "y" ]
-	then
-		# Ensure OUTPUT_DIR is a mount point.  If a directory is a mount point,
-		# it will have a different device number from its parent
-		if [ "$(stat -fc%t:%T $OUTPUT_DIR)" = "$(stat -fc%t:%T $OUTPUT_DIR/../)" ]
-		then
-			error "It doesn't look like $OUTPUT_DIR is a mount point, and INSTALL is set.  There is probably something wrong. Aborting just in case."
-		fi
-
-		# Ensure none of the files are already in place if installing, as that
-		# could mean an oversight on the user's part
-		for pkg in $(echo $all_pkgs_make)
-		do
-			# we don't care if it is not set
-			make_val=$(get_val "MAKE_${PKG}")
-			if [ "$make_val" = "y" ]
-			then
-				files=$(get_val "${pkg}_files")
-				for file in $(echo $files)
-				do
-					if [ -e "$OUTPUT_DIR/$file" ]
-					then
-						PKG=$(upper $pkg)
-						error "INSTALL and MAKE_${PKG} are set, but $OUTPUT_DIR/$file is already in place.  Are you overwriting something? Aborting just in case."
-					fi
-				done
-			fi
-		done
-	fi
-
-	# Ensure all of the files are already in place if updating
-	if [ "$UPDATE" = "y" ]
-	then
-		for pkg in $(echo $all_pkgs_make)
-		do
-			# we don't care if it is not set
-			make_val=$(get_val "MAKE_${PKG}")
-			if [ "$make_val" = "y" ]
-			then
-				files=$(get_val "${pkg}_files")
-				for file in $(echo $files)
-				do
-					if ! [ -e "$OUTPUT_DIR/$file" ]
-					then
-						PKG=$(upper $pkg)
-						error "UPDATE and MAKE_${PKG} are set, but $OUTPUT_DIR/$file is not already in place.  Not really updating if it doesn't exist. Aborting just in case."
-					fi
-				done
-			fi
-		done
-	fi
-
-	check
-}
-
-### package usage
-# a lot of these will just look at $task for the package to which it should operate on/with
-
-copy_untar(){
-	announce_low "Copying/untaring $task"
-	# we could be copying a directory OR untaring
-
-	runcmd "mkdir -p $src/$task" || abort
-	TASK="$(upper "$task")"
-	srcloc=$(get_val "${TASK}_SRC")
-	if [ -d $srcloc ]
-	then
-		runcmd "cp -r $srcloc $src/$task"
-	else
-		runcmd "cd $src/$task"
-		runcmd "tar xvf $srcloc"
-	fi
-
-	check
-}
-
-# this is only used for fuse at the moment, so things are hardcoded for fuse
-# specifically, only tested against fuse 2.9.3
-# hopefully the patches will be upstreamed and this will be unnecessary
-apply_patches(){
-	announce_low "Patching fuse"
-	# generate patches
-	mkdir -p $SCRATCH_DIR/patches/fuse
-cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-headers.patch
---- fuse-2.9.3.org/include/fuse_common.h
-+++ fuse-2.9.3/include/fuse_common.h
-@@ -28,8 +28,8 @@
- #define FUSE_MAKE_VERSION(maj, min)  ((maj) * 10 + (min))
- #define FUSE_VERSION FUSE_MAKE_VERSION(FUSE_MAJOR_VERSION, FUSE_MINOR_VERSION)
- 
--/* This interface uses 64 bit off_t */
--#if _FILE_OFFSET_BITS != 64
-+/* This interface uses 64 bit off_t, and only glibc has an implementation with 2 different sizes */
-+#if defined(__GLIBC__) && _FILE_OFFSET_BITS != 64
- #error Please add -D_FILE_OFFSET_BITS=64 to your compile flags!
- #endif
- 
-EOF
-cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-lock.patch
---- fuse-2.9.3.org/lib/fuse_lowlevel.c
-+++ fuse-2.9.3/lib/fuse_lowlevel.c
-@@ -24,6 +24,7 @@
- #include <limits.h>
- #include <errno.h>
- #include <assert.h>
-+#include <sys/file.h>
- 
- #ifndef F_LINUX_SPECIFIC_BASE
- #define F_LINUX_SPECIFIC_BASE       1024
---- fuse-2.9.3.org/lib/fuse.c
-+++ fuse-2.9.3/lib/fuse.c
-@@ -37,6 +37,7 @@
- #include <sys/uio.h>
- #include <sys/time.h>
- #include <sys/mman.h>
-+#include <sys/file.h>
- 
- #define FUSE_NODE_SLAB 1
- 
-EOF
-cat << 'EOF' >$SCRATCH_DIR/patches/fuse/fuse-paths.patch
---- fuse-2.9.3.org/lib/mount_util.c
-+++ fuse-2.9.3/lib/mount_util.c
-@@ -16,6 +16,7 @@
- #include <errno.h>
- #include <fcntl.h>
- #include <limits.h>
-+#include <paths.h>
- #ifndef __NetBSD__
- #include <mntent.h>
- #endif
---- fuse-2.9.3.org/util/fusermount.c
-+++ fuse-2.9.3/util/fusermount.c
-@@ -20,6 +20,7 @@
- #include <errno.h>
- #include <fcntl.h>
- #include <pwd.h>
-+#include <paths.h>
- #include <mntent.h>
- #include <sys/wait.h>
- #include <sys/stat.h>
-EOF
-	for patch in $SCRATCH_DIR/patches/fuse/*
-	do
-		runcmd "cd $SCRATCH_DIR/src/fuse/"
-		runcmd "cd $(ls)"
-		runcmd "patch -p1 < $patch" >>$log 2>&1 || abort
-	done
-	check
 }
 
 runcmd(){
-	echo "" >>$log 2>&1
+	echo ""       >>$log 2>&1
 	echo "\`$@\`" >>$log 2>&1
-	eval "$@" >>$log 2>&1
+	eval "$@"     >>$log 2>&1
+}
+
+copy_untar(){
+	announce_low "Preparing $task source"
+	runcmd "mkdir -p $src/$task" || abort
+	if ls $pwd/src/*$task*tar* >/dev/null 2>&1
+	then
+		runcmd "cd $src/$task/"
+		runcmd "tar xf $pwd/src/*$task*tar*"
+	elif ls $pwd/src/*$task* >/dev/null 2>&1
+	then
+		runcmd "cp -r $pwd/src/*$task* $src/$task/"
+	else
+		source_help
+	fi
+	check
 }
 
 configure(){
@@ -590,287 +159,195 @@ install(){
 	check
 }
 
-ensure_static(){
-	announce_low "Ensuring $1 is static"
-	if ldd "$1" >>$log 2>&1
-	then
-		echo "The file at"
-		echo "$1"
-		echo "Does not appear to be a statically-linked executable."
-		echo "Looks like maybe something went wrong.  Aborting."
-		exit 1
-	fi
-	check
+make_headers(){
+	# check if already done
+	if [ -n "$MAKE_HEADERS" ]; then return; fi
+	# dependencies:
+	#make_musl
+	# (none)
+
+	task="linux"
+	announce_high "Making linux headers"
+	copy_untar
+	compile "headers_install INSTALL_HDR_PATH=$dev"
+
+	MAKE_HEADERS="1"
 }
 
-busybox_defconfig(){
-	announce_low "Generating busybox config"
+make_musl(){
+	# check if already done
+	if [ -n "$MAKE_MUSL" ]; then return; fi
+	# dependencies:
+	make_headers
+	# (none)
+
+	task="musl"
+	announce_high "Making musl"
+	copy_untar
+	configure --prefix=$dev --disable-shared --enable-static
+	compile
+	install # installing in /tmp, won't keep in actual install
+
+	MAKE_MUSL="1"
+}
+
+make_fuse(){
+	# check if already done
+	if [ -n "$MAKE_MUSL" ]; then return; fi
+	# dependencies:
+	make_musl
+
+	task="fuse"
+	announce_high "Making fuse"
+	copy_untar
+	announce_low "Making configure script"
+	runcmd "cd $src/$task/"
+	runcmd "cd $(ls)"
+	runcmd "./makeconf.sh"
+	check
+	configure --prefix=$dev --disable-shared --enable-static --disable-util --disable-example
+	compile 'CC='"$dev/bin/musl-gcc"
+	install
+
+
+	MAKE_FUSE="1"
+}
+
+make_devstack(){
+	# check if already done
+	if [ -n "$MAKE_DEVSTACK" ]; then return; fi
+	# dependencies:
+	make_musl
+	make_headers
+	make_fuse
+
+	MAKE_DEVSTACK="1"
+}
+
+busybox_set_option(){
+	if grep -q "^$1=" .config
+	then
+		runcmd "sed 's/^$1=./$1=$2/' .config > .config-new"
+		runcmd "mv .config-new .config"
+	elif grep -q "^# $1 is not set" .config
+	then
+		runcmd "sed 's/^# $1 is not set/$1=$2/' .config > .config-new"
+		runcmd "mv .config-new .config"
+	else
+		runcmd "echo '$1=$2' >> .config"
+	fi
+}
+
+make_busybox(){
+	# check if already done
+	if [ -n "$MAKE_BUSYBOX" ]; then return; fi
+	# dependencies:
+	make_musl
+	make_headers
+
+	task="busybox"
+	announce_high "Making busybox"
+	copy_untar
+	announce_low "Making config"
 	runcmd 'cd $src/$task/'
 	runcmd 'cd $(ls)'
 	# use busybox's default config
 	runcmd 'make defconfig'
 	# ensure static
-	if ! grep -q "^CONFIG_STATIC" .config 2>/dev/null
-	then
-		runcmd 'echo "CONFIG_STATIC=y" >> .config'
-	elif grep -q "^CONFIG_STATIC=n" .config 2>/dev/null
-	then
-		runcmd 'sed "s/^CONFIG_STATIC=n/CONFIG_STATIC=y/" .config > .config-new'
-		runcmd 'mv .config-new .config'
-	fi
+	busybox_set_option "CONFIG_STATIC" "y"
+	# remove items which make compiling difficult.  if the core doesn't need
+	# them, better to skip than to worry about patching
+	busybox_set_option "CONFIG_INETD" "n"
 	check
+	announce_low "Fixing miscellaneous busybox-musl issues"
+	runcmd "cd $dev/include/netinet/"
+	runcmd "awk '{p=1}/^struct ethhdr/,/^}/{print \"//\"\$0; p=0}p==1' if_ether.h > if_ether.h.new"
+	runcmd "mv if_ether.h.new if_ether.h"
+	check
+	compile "CC=$dev/bin/musl-gcc"
+
+	MAKE_BUSYBOX="1"
 }
 
-busybox_test(){
-	# test busybox in case either the user provides a bad .config or there's
-	# some issue between busybox and something else (like musl or ld)
-	announce_low "Testing $1"
+make_caputils(){
+	# check if already done
+	if [ -n "$MAKE_CAPUTILS" ]; then return; fi
+	# dependencies:
+	make_musl
 
-	echo "Testing to see if it runs at all" >>$log
-	if ! ./$1 >>$log 2>&1
-	then
-		echo "$1 did not run correctly" | tee -a $log
-		return 1
-	fi
+	announce_high "Making caputils"
+	task="cap"
+	copy_untar
+	compile
+	install DESTDIR=$dev prefix=/ RAISE_SETFCAP=NO
 
-	# if ldd returns 0, then it is NOT static
-	echo "Testing to see if it is static" >>$log
-	if ldd $1 >>$log 2>&1
-	then
-		echo "$1 is not static" | tee -a $log
-		return 1
-	fi
-
-	echo "Testing for missing applets" >>$log
-	MISSINGAPPLETS=""
-	for APPLET in "\[" awk basename cat chmod chroot chvt clear\
-		cmp cp cut dd df dirname echo ed env expand expr false find\
-		free getty grep head hostname hwclock id init install\
-		kill last ln ls mdev mkdir more mount mt od passwd\
-		printf ps readlink reset rm route sed seq sh sleep sort\
-		split stat swapon sync tail time top touch true tty umount\
-		uname vi wc wget which xargs yes
-	do
-		if ! ./$1 | awk 'p==1;/^Currently/{p=1}' | tr -d ',\n' | sed 's/[ \t]/\n/g' | grep -q "^$APPLET$"
-		then
-			MISSINGAPPLETS="$MISSINGAPPLETS $APPLET"
-		fi
-	done
-	if [ -n "$MISSINGAPPLETS" ]
-	then
-		echo "$1 is missing the following applets: $MISSINGAPPLETS" | tee -a $log
-		return 1
-	fi
-
-	echo "Testing for --install" >>$log
-	if ! $1 | grep -q -- "--install"
-	then
-		echo "$1 is missing --install" | tee -a $log
-	fi
-	echo "$1 looks good"
-	return 0
+	MAKE_CAPUTILS="1"
 }
 
-# END OF FUNCTIONS
-# execution actually starts here
-
-# New users may run this without RTFM'ing.  As a sanity measure, print some
-# help if no flags are provided.
-if [ "$1" != "-c" ] && [ "$1" != "-g" ]
+if [ "$1" != "make" ] && [ "$1" != "install" ]
 then
 	print_help
 fi
+
+tmp="/tmp/bedrocklinux-installer-tmp-$(whoami)"
+src="$tmp/src"
+dev="$tmp/dev"
+log="$tmp/log"
+pwd="$(pwd)"
 
 echo "-----------------------------------------"
 echo "Bedrock Linux 1.0alpha4 Flopsie installer"
 echo "-----------------------------------------"
 echo ""
 
-# can't log yet since SCRATCH hasn't yet been defined
-log="/dev/null"
-
-announce_high "Early Setup"
-
-# If the first argument is "-g", generate a blank configuration file for this
-# installer.
-if [ "$1" = "-g" ]
+if [ -e $tmp ]
 then
-	generate_config "$@"
+	echo -n "Removing previous run... "
+	rm -rf $tmp
+	echo "done"
 fi
+echo -n "Making temporary directory structure... "
+mkdir -p $tmp
+mkdir -p $src
+mkdir -p $dev
+touch $log
+echo "done"
+announce_high "Starting logging at"
+echo "$log"
+echo "(consider tail -f)"
+echo ""
 
-# The first argument has to be "-c", indicating a config is available.  Attempt
-# to source it and do some sanity checks on it.
-source_config "$@"
-sanity_check_config
-
-if [ -n "$(ls -A $OUTPUT_DIR)" ] && [ "$UPDATE" = "n" ]
+if [ "$1" = "make" ]
 then
-cat <<EOF
-WARNING: $OUTPUT_DIR is not empty.  If this is because of a previous run, you
-may want to clear it out.  Be careful not to remove files you may want in
-there, such as a mounted /home directory.
-Sleeping for 10 seconds, hit ctrl-c to abort
-
-EOF
-	sleep 10
-fi
-
-# clear scratch
-if [ -n "$(ls -A $SCRATCH_DIR)" ]
-then
-	announce_low "Setting up $SCRATCH_DIR"
-	rm -rf $SCRATCH_DIR/*    || abort
-	touch $SCRATCH_DIR/test || abort
-	rm $SCRATCH_DIR/test    || abort
-	check
-fi
-
-# set up some vars for stuff in SCRATCH_DIR
-log="$SCRATCH_DIR/log"
-dev="$SCRATCH_DIR/dev"
-src="$SCRATCH_DIR/src"
-
-# setup log
-if [ -n "$2" ]
-then
-	in=$2
-else
-	in="./bedrocklinux-installer.conf"
-fi
-announce_low "Verbose logging to $log"
-(
-# could not log before this as we did not know where to log
-# populate log with what we have already announced
-cat <<EOF
------------------------------------------
-Bedrock Linux 1.0alpha4 Flopsie installer
------------------------------------------
-
-EOF
-cat <<EOF
-Early Setup
-  Parsing config at $in... done.
-  Running sanity check on config... done.
-EOF
-if [ -n "$(ls -A $OUTPUT_DIR)" ]
-then
-cat << 'EOF'
-WARNING: $OUTPUT_DIR is not empty.  If this is because of a previous run, you
-may want to clear it out.  Be careful not to remove files you may want in
-there, such as a mounted /home directory.
-Sleeping for 10 seconds, hit ctrl-c to abort
-
-EOF
-fi
-cat <<EOF
-  Setting up $SCRATCH_DIR... done.
-  Verbose logging to $log...
-EOF
-) > $log
-check
-echo "  (consider \`tail -f $log\`)" | tee -a $log
-
-announce_high "Preparing source"
-get_package_info
-for task in $(echo $all_pkgs_src)
-do
-	if has_dependents "$task"
-	then
-		copy_untar
-	else
-		echo "  (Skipping $task, not required)" | tee -a $log
-	fi
-done
-
-announce_high "Preparing development stack"
-task="musl"
-if has_dependents "$task"
-then
-	configure --prefix=$dev --disable-shared --enable-static
-	compile
-	install
-	announce_low "Fixing lib/lib64 confusion"
-	runcmd "ln -s $dev/lib $dev/lib64"
-	check
-else
-	echo "  (Skipping $task, not required)" | tee -a $log
-fi
-task="libcap"
-if has_dependents "$task"
-then
-	compile
-	install DESTDIR=$dev prefix=/ RAISE_SETFCAP=NO
-	for exe in $dev/sbin/*
+	while [ -n "$2" ]
 	do
-		ensure_static "$exe"
+		shift
+		case $1 in
+			"musl")
+				make_musl
+				;;
+			"headers")
+				make_headers
+				;;
+			"fuse")
+				make_fuse
+				;;
+			"devstack")
+				make_devstack
+				;;
+			"busybox")
+				make_busybox
+				;;
+			"caputils")
+				make_caputils
+				;;
+			"*")
+				abort "\"$1\" is not a valid component."
+				;;
+		esac
 	done
-else
-	echo "  (Skipping $task, not required)" | tee -a $log
-fi
-task="fuse"
-if has_dependents "$task"
+elif [ "$1" = "install" ]
 then
-	apply_patches
-	configure --prefix=$dev --disable-shared --enable-static --disable-util
-	compile 'CC='"$dev/bin/musl-gcc"
-	install
-fi
-task="kernel_headers"
-if has_dependents "$task"
-then
-	runcmd "cp -r $dev/include/scsi $dev/include/scsi-backup"
-	compile 'headers_install INSTALL_HDR_PATH='"$dev"
-	runcmd "cp $dev/include/scsi-backup/* $dev/include/scsi/"
-else
-	echo "  (Skipping $task, not required)" | tee -a $log
-fi
-
-announce_high "Compiling components"
-task="brc"
-if [ "$MAKE_BRC" = "y" ]
-then
-	announce_low "Compiling brc"
-	runcmd 'cd $src/bedrock_userland/'
-	runcmd 'cd $(ls)'
-	runcmd 'cd src/brc'
-	runcmd 'make CC='"$dev/bin/musl-gcc"
-	check
-	ensure_static 'brc'
-else
-	echo "(Skipping $task, not required)" | tee -a $log
-fi
-task="busybox"
-if [ "$MAKE_BUSYBOX" = "y" ]
-then
-	if [ -z "$BUSYBOX_CONFIG" ]
-	then
-		busybox_defconfig
-	else
-		runcmd 'cd $src/$task'
-		runcmd 'cd $(ls)'
-		runcmd 'cp "$BUSYBOX_CONFIG" ".config"'
-	fi
-	# TODO: make it work with musl
-	#compile 'CC='"$dev/bin/musl-gcc"
-	compile
-	# older versions of ld apparently break busybox when stripping it.  Test if
-	# it runs stripped vs unstripped.
-	runcmd 'cd $SCRATCH_DIR/src/$task/'
-	runcmd 'cd $(ls)'
-	new_busybox=""
-	if ! busybox_test ./busybox
-	then
-		if ! busybox_test ./busybox_unstripped
-		then
-			echo "Failed to create suitable busybox"
-			abort
-		else
-			new_busybox=./busybox_unstripped
-		fi
-	else
-		new_busybox=./busybox
-	fi
-	ensure_static "$new_busybox"
-else
-	echo "(Skipping $task, not required)" | tee -a $log
+	shift
+	echo "--"
 fi
